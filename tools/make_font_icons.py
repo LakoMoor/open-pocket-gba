@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes the menu icons into glyphs 1..31 of rtl/video/font8x8.hex (8 rows, MSB = left).
+"""Writes the menu icons into glyphs 1..31, 96 and 127 of rtl/video/font8x8.hex (8 rows, MSB = left).
 
 Codes are used by fw/src/osd.h (G_*). With bit 7 set in the OSD character, rows 0 and 7
 are repeated into the 2 px cell padding, so the pill ends and lines join vertically.
@@ -38,6 +38,9 @@ ICONS = {
     29: ("SQ_FULL", [0x00, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x00]),
     30: ("SQ_EMPTY",[0x00, 0x7E, 0x42, 0x42, 0x42, 0x42, 0x7E, 0x00]),
     31: ("MOON",    [0x1C, 0x38, 0x70, 0x70, 0x70, 0x38, 0x1C, 0x00]),
+    # radio buttons of the Analogue OS theme in two otherwise unused ASCII codes ('`' and DEL)
+    96:  ("RING_ON", [0x3C, 0x42, 0x99, 0xBD, 0xBD, 0x99, 0x42, 0x3C]),
+    127: ("RING",    [0x3C, 0x42, 0x81, 0x81, 0x81, 0x81, 0x42, 0x3C]),
 }
 
 root = os.path.join(os.path.dirname(__file__), "..")

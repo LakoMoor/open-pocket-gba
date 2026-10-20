@@ -629,14 +629,14 @@ static const uint8_t dim_seconds[4] = { 0, 15, 30, 60 };
 // ================================================================ menu model
 enum {
     P_MAIN, P_LIBRARY, P_BROWSER, P_DISPLAY, P_AUDIO, P_CONTROLS, P_SYSTEM, P_INFO,
-    P_CART, P_FILEACT, P_GAME, P_POWER, P_SLEEP
+    P_CART, P_FILEACT, P_GAME, P_POWER, P_SLEEP, P_CHOICE
 };
 enum {
     I_NONE, I_RESUME, I_LIBRARY, I_SAVE, I_RESET, I_PG_DISPLAY, I_PG_AUDIO, I_PG_CONTROLS,
     I_PG_SYSTEM, I_PG_INFO, I_SLEEP_NOW,
     I_SRC_SD, I_SRC_FLASH, I_FLASH_GAME, I_FILE, I_DIR, I_UP,
     I_OPT, I_DEFAULTS, I_INFO,
-    I_SRC_CART, I_PLAY_CART, I_ERASE_CART, I_PLAY_SD, I_WRITE_CART, I_PG_POWER
+    I_SRC_CART, I_PLAY_CART, I_ERASE_CART, I_PLAY_SD, I_WRITE_CART, I_PG_POWER, I_CHOICE
 };
 
 typedef struct {
@@ -669,7 +669,7 @@ static const char *const o_boot[]  = { "Last Game", "Menu" };
 static const char *const o_sleep[] = { "Off", "5 min", "15 min", "30 min" };
 static const char *const o_boost[] = { "x1", "x2", "x4", "x8" };
 static const char *const o_preset[] = { "Normal", "Battery", "Custom" };
-static const char *const o_theme[] = { "Pocket", "Ozone (Switch)", "XMB (PS3)", "Game Boy", "iPod", "BIOS", "Terminal" };
+static const char *const o_theme[] = { "Pocket", "Ozone (Switch)", "XMB (PS3)", "Game Boy", "iPod", "BIOS", "Terminal", "Analogue OS" };
 static const char *const o_fps[]   = { "60 fps", "30 fps" };
 static const char *const o_dim[]   = { "Off", "15 s", "30 s", "60 s" };
 static const char *const o_poll[]  = { "200 ms", "500 ms" };
@@ -746,9 +746,18 @@ static void build_browser(void) {
 }
 
 // ---------------------------------------------------------------- page builders
+// choices of one setting as their own page (Analogue OS theme)
+static item_t ch_item;                  // copy of the setting's item
+static int    ch_ret_page, ch_ret_cursor;
+static char   ch_parent[48];
+
 static void build_page(void) {
     nitems = 0;
     switch (page) {
+    case P_CHOICE:
+        strncpy(page_title, ch_item.label, sizeof page_title - 1);
+        for (int i = 0; i < ch_item.nopt; i++) add(I_CHOICE, 0, ch_item.opts[i], ch_item.desc)->arg = i;
+        break;
     case P_MAIN: {
         strcpy(page_title, "Menu");
         if (game.loaded) {
@@ -877,7 +886,7 @@ static void build_page(void) {
         break;
     case P_SYSTEM:
         strcpy(page_title, "System");
-        add_opt(G_STAR, "Theme", "Look of the menu on HDMI and on the LCD.", &set.theme, 7, o_theme);
+        add_opt(G_STAR, "Theme", "Look of the menu on HDMI and on the LCD.", &set.theme, 8, o_theme);
         add_opt(G_CART, "Model", "Auto follows the cartridge header. Applies when the game is reset.", &set.sys_mode, 3, o_sys);
         add_opt(G_SAVE, "Autosave", "Write the save 2 s after the game changes it, and when the menu opens.", &set.autosave, 2, o_offon);
         add_opt(G_CHECK, "Save Notifications", "Show a short message when the save was written.", &set.toasts, 2, o_offon);
@@ -913,7 +922,7 @@ static void build_page(void) {
 // ---------------------------------------------------------------- themes
 // Pocket and Game Boy: one list per page. Ozone (sidebar) and XMB (category bar): the
 // categories are a second level; focus 0 = categories, 1 = the page of the category.
-enum { TH_POCKET, TH_OZONE, TH_XMB, TH_GAMEBOY, TH_IPOD, TH_BIOS, TH_TERM, TH_COUNT };
+enum { TH_POCKET, TH_OZONE, TH_XMB, TH_GAMEBOY, TH_IPOD, TH_BIOS, TH_TERM, TH_AOS, TH_COUNT };
 static int two_level(void) { return set.theme == TH_OZONE || set.theme == TH_XMB; }
 
 typedef struct { uint8_t icon; const char *name; uint8_t page; } cat_t;
@@ -1438,6 +1447,133 @@ static void lcd_term(void) {
     }
 }
 
+// ---- Analogue OS (Analogue Pocket). A left-indented column of big labels, the white pill runs
+// from the column to the right edge, a thin scroll thumb at the edge, no icons. A on a setting
+// opens its choices as a list with radio buttons. Status line: "- " on the top page, otherwise
+// "* Parent  Page"; a source badge and the position on the right. Over a running game the menu
+// is drawn on the dimmed picture (colour 0), like the Pocket's in-game menu.
+static int aos_scroll;
+
+static uint8_t aos_bg(void) { return (game.loaded || home_running) ? CL_GAME : CL_NAVY; }
+
+static int aos_first(int rows) {
+    if (cursor < aos_scroll) aos_scroll = cursor;
+    if (cursor >= aos_scroll + rows) aos_scroll = cursor - rows + 1;
+    if (aos_scroll > nitems - rows) aos_scroll = nitems > rows ? nitems - rows : 0;
+    return aos_scroll;
+}
+
+static const char *aos_parent(void) {
+    switch (page) {
+    case P_MAIN: return "";
+    case P_CHOICE: return ch_parent;
+    case P_BROWSER: case P_CART: case P_FILEACT: return "Library";
+    default: return "Menu";
+    }
+}
+
+static const char *aos_badge(void) {
+    if (game.loaded) return game.src == 3 ? "CART" : game.src == 2 ? "SD" : "FLASH";
+    return sd_mounted ? "SD" : "";
+}
+
+// right side of a row: radio for choices, otherwise the value (chevrons only on the selected option)
+static const char *aos_value(item_t *it, int s, char *vb, int n, uint8_t *radio) {
+    *radio = 0;
+    if (it->id == I_CHOICE) { *radio = (*ch_item.val == it->arg) ? G_RING_ON : G_RING; return ""; }
+    const char *v = item_value(it, s, vb, n);
+    if (v[0] == G_CHEV_R && !v[1]) return "";
+    return v;
+}
+
+static void draw_aos(void) {
+    uint8_t bg = aos_bg();
+    char tb[48], vb[48], lb[48];
+    osd_clear(AT(CL_WHITE, bg));
+    const int x0 = 5, w = 35, rows = 10;               // pill from column 5 to 39, thumb in 40
+    int first = aos_first(rows);
+    for (int r = 0; r < rows && first + r < nitems; r++) {
+        int i = first + r, y = 1 + r * 2;
+        item_t *it = &items[i];
+        int s = i == cursor && selectable(i);
+        uint8_t tbg = s ? CL_WHITE : bg, radio;
+        if (s) osd_pill(x0, y, w, CL_WHITE, bg);
+        const char *v = aos_value(it, s, vb, sizeof vb, &radio);
+        int vl = (int)strlen(v);
+        if (vl > 16 && it->id == I_OPT) { v = it->opts[*it->val]; vl = (int)strlen(v); }   // drop the arrows
+        if (vl > 16) vl = 16;
+        int xr = x0 + w - 2;                               // right end of the text
+        if (radio) { osd_put(xr - 1, y, radio, AT(s ? CL_BLACK : CL_WHITE, tbg)); xr -= 3; }
+        int lw = xr - (x0 + 2) - (vl ? vl + 1 : 0);
+        const char *lab = label_case(it, 0, lb, sizeof lb);
+        uint8_t lc = s ? CL_BLACK : it->id == I_INFO ? CL_GREY : CL_WHITE;
+        osd_textn(x0 + 2, y, s ? marquee(lab, lw) : lab, lw, AT(lc, tbg));
+        if (vl) osd_textn(xr - vl, y, v, vl, AT(s ? CL_LINE : CL_LIGHT, tbg));
+    }
+    if (nitems > rows) {                               // thin thumb at the edge, no track
+        int span = rows * 2 - 1, th = span * rows / nitems, ty = (span - th) * first / (nitems - rows);
+        if (th < 1) th = 1;
+        for (int k = 0; k < th; k++) osd_put(x0 + w + 1, 1 + ty + k, G_THUMB | EXT, AT(CL_LIGHT, bg));
+    }
+    if (!nitems) osd_text(x0 + 2, 1, page == P_BROWSER ? "No games in this folder" : "Empty", AT(CL_GREY, bg));
+    // status line
+    const char *par = aos_parent();
+    if (*par) {
+        osd_put(x0, 22, G_BULLET, AT(CL_WHITE, bg));
+        int x = osd_text(x0 + 2, 22, par, AT(CL_GREY, bg)) + 1;
+        osd_textn(x, 22, page == P_CHOICE ? ch_item.label : title_now(tb, sizeof tb), 34 - x, AT(CL_WHITE, bg));
+    } else osd_fill(x0, 22, 2, G_HLINE, AT(CL_WHITE, bg));
+    int xr = x0 + w + 1;
+    if (nitems) { sfmt(tb, sizeof tb, "%c %d/%d", G_BULLET, cursor + 1, nitems); xr -= (int)strlen(tb); osd_text(xr, 22, tb, AT(CL_WHITE, bg)); }
+    const char *bd = aos_badge();
+    if (*bd) { xr -= (int)strlen(bd) + 1; osd_text(xr, 22, bd, AT(CL_BLACK, CL_LIGHT)); }
+}
+
+static void lcd_aos(void) {
+    uint8_t bg = aos_bg();
+    char tb[24], vb[48], lb[48];
+    lcd_clear(AT(CL_WHITE, bg));
+    const int rows = 10;                               // rows 1..10, pill columns 1..14, thumb in 15
+    int first = aos_first(rows);
+    for (int r = 0; r < rows && first + r < nitems; r++) {
+        int i = first + r, y = 1 + r;
+        item_t *it = &items[i];
+        int s = i == cursor && selectable(i);
+        uint8_t tbg = s ? CL_WHITE : bg, radio;
+        if (s) lcd_pillx(1, y, 14, CL_WHITE, bg);
+        if (it->id == I_INFO) { lcd_textn(2, y, it->value, 12, AT(CL_LIGHT, tbg)); continue; }
+        const char *v = aos_value(it, 0, vb, sizeof vb, &radio);
+        int xr = 14;
+        if (radio) { lcd_put(13, y, radio, AT(s ? CL_BLACK : CL_WHITE, tbg)); xr = 12; }
+        const char *lab = label_case(it, 0, lb, sizeof lb);
+        int vl = (int)strlen(v), ll = (int)strlen(lab), room = xr - 2;
+        if (ll + 1 + vl > room) vl = 0;                 // the status line shows it
+        int lw = room - (vl ? vl + 1 : 0);
+        lcd_textn(2, y, s ? marquee(lab, lw) : lab, lw, AT(s ? CL_BLACK : CL_WHITE, tbg));
+        if (vl) lcd_text(xr - vl, y, v, AT(s ? CL_LINE : CL_LIGHT, tbg));
+    }
+    if (nitems > rows) {
+        int th = rows * rows / nitems, ty = (rows - th) * first / (nitems - rows);
+        if (th < 1) th = 1;
+        for (int k = 0; k < th; k++) lcd_put(15, 1 + ty + k, G_THUMB | EXT, AT(CL_LIGHT, bg));
+    }
+    if (!nitems) lcd_text(2, 1, page == P_BROWSER ? "No games" : "Empty", AT(CL_GREY, bg));
+    // status: the selected option's value, or where we are; position on the right
+    if (nitems) sfmt(tb, sizeof tb, "%d/%d", cursor + 1, nitems); else tb[0] = 0;
+    int rw = (int)strlen(tb), lw = 15 - rw;
+    if (cursor < nitems && items[cursor].id == I_OPT) {
+        char ob[44];
+        sfmt(ob, sizeof ob, "%c %s %c", G_CHEV_L, items[cursor].opts[*items[cursor].val], G_CHEV_R);
+        lcd_textn(1, 11, marquee(ob, lw - 2), lw - 2, AT(CL_WHITE, bg));
+    } else if (page == P_MAIN) lcd_fill(1, 11, 2, G_HLINE, AT(CL_WHITE, bg));
+    else {
+        lcd_put(1, 11, G_BULLET, AT(CL_WHITE, bg));
+        const char *t = page == P_CHOICE ? ch_item.label : lcd_title();
+        lcd_textn(3, 11, marquee(t, lw - 4), lw - 4, AT(CL_GREY, bg));
+    }
+    lcd_text(15 - rw, 11, tb, AT(CL_WHITE, bg));
+}
+
 static void draw_lcd(void) {
     switch (set.theme) {
     case TH_OZONE:   lcd_ozone(); break;
@@ -1446,6 +1582,7 @@ static void draw_lcd(void) {
     case TH_IPOD:    lcd_ipod(); break;
     case TH_BIOS:    lcd_bios(); break;
     case TH_TERM:    lcd_term(); break;
+    case TH_AOS:     lcd_aos(); break;
     default:         lcd_pocket(); break;
     }
     lcd_present();
@@ -1461,6 +1598,7 @@ static void draw_menu(void) {
     case TH_IPOD:    draw_ipod(); break;
     case TH_BIOS:    draw_bios(); break;
     case TH_TERM:    draw_term(); break;
+    case TH_AOS:     draw_aos(); break;
     default:         draw_pocket(); break;
     }
     osd_present();
@@ -1517,8 +1655,24 @@ static int opt_changed(item_t *it) {
 }
 
 // returns 1 when the menu should close
+static void open_choice(item_t *it) {
+    ch_item = *it;
+    ch_ret_page = page;
+    ch_ret_cursor = cursor;
+    strncpy(ch_parent, page_title, sizeof ch_parent - 1);
+    go(P_CHOICE, 0);
+    cursor = *ch_item.val < nitems ? *ch_item.val : 0;     // `it` pointed into the old page
+}
+
 static int activate(item_t *it, int dir) {
     switch (it->id) {
+    case I_CHOICE:
+        *ch_item.val = (uint8_t)it->arg;
+        go(ch_ret_page, 0);
+        cursor = ch_ret_cursor;
+        opt_changed(&ch_item);
+        if (cursor >= nitems) cursor = nitems ? nitems - 1 : 0;
+        break;
     case I_RESUME: return 1;
     case I_LIBRARY: go(P_LIBRARY, 0); break;
     case I_SAVE: {
@@ -1640,6 +1794,7 @@ static int activate(item_t *it, int dir) {
 static int back(void) {
     if (two_level() && page == cats[cat].page) { focus = 0; return 0; }
     switch (page) {
+    case P_CHOICE: go(ch_ret_page, 0); cursor = ch_ret_cursor; break;
     case P_MAIN: return game.loaded || home_running;
     case P_BROWSER:
         if (page_title[0] != 'I' && strcmp(cur_dir, "/")) {
@@ -1728,6 +1883,7 @@ static void menu_run(void) {
             item_t *it = &items[cursor];
             if ((k & (K_LEFT | K_RIGHT)) && it->id == I_OPT) activate(it, (k & K_LEFT) ? -1 : 1);
             else if ((k & K_LEFT) && set.theme == TH_OZONE && page == cats[cat].page) focus = 0;
+            else if ((k & (K_A | K_X)) && it->id == I_OPT && set.theme == TH_AOS) open_choice(it);
             else if (k & (K_A | K_X)) quit = activate(it, 1);
         }
         if (!quit && (k & (K_B | K_Y))) quit = back();
@@ -1805,7 +1961,7 @@ int main(void) {
             set.spk_mode = o.spk_mode;
             if (o.power_mode) { set.sdram_pd = 1; set.lcd_slow = 1; set.dim_idx = 2; set.poll_slow = 1; set.hdmi_off = 1; }
         }
-        if (set.theme >= 7) set.theme = 1;
+        if (set.theme >= 8) set.theme = 1;
         set_stored = set;
     }
     apply_settings();

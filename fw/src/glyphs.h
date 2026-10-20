@@ -31,3 +31,5 @@
 #define G_SQ_FULL 29
 #define G_SQ_EMPTY 30
 #define G_MOON 31
+#define G_RING_ON 96
+#define G_RING 127

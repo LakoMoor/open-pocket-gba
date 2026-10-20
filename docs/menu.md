@@ -26,6 +26,7 @@ System → Theme switches the look of the HDMI menu and the SPI LCD:
 | **iPod** | grey title bar, white list, square blue bar, chevrons | one list per page |
 | **BIOS** | Award-style blue setup screen, red bar, yellow `[values]`, Item Help column | one list per page |
 | **Terminal** | green phosphor shell: the page as `ls`, the path as a prompt, block cursor | one list per page |
+| **Analogue OS** (after the Analogue Pocket) | big airy list without icons, white pill, drawn over the dimmed game; breadcrumb and position at the bottom | one list per page |
 
 ## Home screen
 
