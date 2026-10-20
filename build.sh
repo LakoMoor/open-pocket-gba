@@ -33,9 +33,13 @@ yosys -q -l "$OUT/yosys.log" -m slang -p "
 "
 
 echo "== nextpnr"
-nextpnr-himbaechel -q -l "$OUT/nextpnr.log" --json "$OUT/synth.json" --write "$OUT/pnr.json" \
-  --device GW2AR-LV18QN88C8/I7 --vopt family=GW2A-18C --vopt cst=rtl/board/tangnano20k.cst \
-  ${PNR_OPTS---pre-pack rtl/board/place.py --sdc rtl/board/clocks.sdc --vopt ioreg_in_iob} ${NEXTPNR_EXTRA:-} --timing-allow-fail
+# The design is close to full: when placement fails, try other placer seeds.
+for SEED in ${SEEDS:-1 42 7 21 3}; do
+  if nextpnr-himbaechel -q -l "$OUT/nextpnr.log" --json "$OUT/synth.json" --write "$OUT/pnr.json"       --device GW2AR-LV18QN88C8/I7 --vopt family=GW2A-18C --vopt cst=rtl/board/tangnano20k.cst       ${PNR_OPTS---pre-pack rtl/board/place.py --sdc rtl/board/clocks.sdc --vopt ioreg_in_iob} ${NEXTPNR_EXTRA:-}       --timing-allow-fail --seed $SEED; then
+    echo "placed with seed $SEED"; break
+  fi
+  echo "seed $SEED failed"
+done
 
 echo "== gowin_pack"
 gowin_pack -d GW2A-18C ${PACK_EXTRA:---mspi_as_gpio} -o "$OUT/$TOP.fs" "$OUT/pnr.json"
