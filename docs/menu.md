@@ -4,7 +4,7 @@ Open the menu with **Select + Start**, board button **S1**, or `m` in the remote
 
 ![menu navigation](img/menu.gif)
 
-The menu is drawn by the firmware in `fw/src/main.c` on a 42 × 24 cell OSD (16 × 20 px cells with a colour per cell) and, in a compact 16 × 16 form, on the SPI LCD.
+The menu is drawn by the firmware in `fw/src/main.c` on a 42 × 24 cell OSD (16 × 20 px cells with a colour per cell) and, in a compact 16 × 12 form, on the SPI LCD. Every theme has its own LCD layout. A selected label that doesn't fit scrolls like a ticker.
 
 | Main page | Display | Audio | Info |
 |---|---|---|---|
@@ -14,12 +14,32 @@ The menu is drawn by the firmware in `fw/src/main.c` on a 42 × 24 cell OSD (16 
 
 System → Theme switches the look of the HDMI menu and the SPI LCD:
 
+![LCD themes](img/lcd_themes.png)
+*The SPI LCD in Ozone, XMB, Pocket, Game Boy, iPod, BIOS and Terminal*
+
 | Theme | Layout | Navigation |
 |---|---|---|
 | **Ozone** (default, after RetroArch / Switch) | sidebar with categories on the left, the page on the right | up / down picks a category, right or A opens it, B or left goes back |
 | **XMB** (after the PS3 / PSP) | category icons in a row, the page below the selected one, a blue wave | left / right picks a category, down or A opens it, B goes back |
 | **Game Boy** | the four DMG greens, a framed screen, upper case | one list per page |
 | **Pocket** | full-screen list with a white rounded bar | one list per page |
+| **iPod** | grey title bar, white list, square blue bar, chevrons | one list per page |
+| **BIOS** | Award-style blue setup screen, red bar, yellow `[values]`, Item Help column | one list per page |
+| **Terminal** | green phosphor shell: the page as `ls`, the path as a prompt, block cursor | one list per page |
+
+## Home screen
+
+![home screen](img/home_screen.png)
+
+With no game loaded the core runs a built-in ROM (`fw/home`, embedded in the firmware). A synthwave intro plays: the sky fades in, the sun rises, and the OPEN POCKET logo drops in with a wobble. A chiptune loops on all four channels. The menu opens over it after the intro, and the animation keeps running behind the menu. **B** on the main page closes the menu onto the home screen, and **A** / **START** opens it again. The ROM works in GBC mode (double speed, per-line palettes) and on a DMG (per-line BGP). To change it, edit `fw/home/gen.py` (graphics, tables, song) and `fw/home/home.asm` (engine). [RGBDS](https://rgbds.gbdev.io) builds it, and `fw/build.sh` calls `fw/home/build.sh` when `rgbasm` is found. `home.gb` is kept in git.
+
+## Screenshots without a capture card
+
+**Select** in the menu prints the LCD and HDMI text buffers on the USB-UART. `tools/lcd_shot.py` renders them to PNG with the real font and palette:
+
+```sh
+python tools/lcd_shot.py lcd.png --osd hdmi.png --keys "M . D D"
+```
 
 **Navigation:** up / down moves the bar, left / right changes a value, A selects, B goes back. L / R on a DualShock jump a page in long lists.
 

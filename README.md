@@ -23,7 +23,8 @@ The MiSTer Game Boy core runs natively on the 20K's GW2AR-18 FPGA. Video goes ou
 - **Settings are remembered** in the flash: display mode, palettes, volume, model, start-up game, power options.
 - **Power saving:** HDMI can be switched off (its PLL is powered down) with a long press on S1 or in the menu, so the board can run on the LCD alone. LCD on/off and backlight level, a sleep mode and sleep timer (game paused, HDMI and LCD off, any button wakes it up), board LEDs off by default, the flash in deep power-down, and the menu CPU sleeps in hardware while the game runs.
 - **Buzzer / speaker output:** sigma-delta audio on pins 76 / 75 (a piezo between the two pins, or a small speaker through an amplifier), with DC removal and up to x8 boost.
-- **Menu themes:** Ozone (Switch-like sidebar, default), XMB (PS3/PSP category bar), Game Boy (DMG greens) and Pocket, also on the SPI LCD.
+- **Menu themes:** Ozone (Switch-like sidebar, default), XMB (PS3/PSP category bar), Game Boy (DMG greens), Pocket, iPod, BIOS setup and Terminal, each with its own SPI LCD layout. Long labels scroll.
+- **Home screen:** with no game loaded, a built-in synthwave intro with a chiptune runs behind the menu, as on MiSTer.
 - **Power page:** every power saving measure as its own setting, plus Normal / Battery presets.
 - **Battery mode:** one switch (System → Power Mode or hold S2) turns off HDMI completely (PLL, tri-stated outputs, no framebuffer traffic), dims the LCD and darkens it after 30 s idle, turns off LEDs and sleeps after 5 min.
 - **Cartridge:** an external W25Qxx flash on four pins acts as a game cartridge. Games are written to it from the SD card in the menu, played from it, and keep their saves on it.

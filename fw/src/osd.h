@@ -1,4 +1,4 @@
-// On-screen display: 42 x 24 cells on HDMI, 16 x 16 cells on the SPI LCD.
+// On-screen display: 42 x 24 cells on HDMI, 16 x 12 cells on the SPI LCD.
 #pragma once
 #include "hw.h"
 #include "glyphs.h"
@@ -31,5 +31,9 @@ void osd_invalidate(void);
 void lcd_clear(uint8_t attr);
 void lcd_put(int x, int y, uint8_t ch, uint8_t attr);
 int  lcd_text(int x, int y, const char *s, uint8_t attr);   // returns the next x
-void lcd_pill(int y, uint8_t fill, uint8_t outside);
+int  lcd_textn(int x, int y, const char *s, int maxw, uint8_t attr);
+void lcd_fill(int x, int y, int w, uint8_t ch, uint8_t attr);
+void lcd_pill(int y, uint8_t fill, uint8_t outside);         // full width
+void lcd_pillx(int x, int y, int w, uint8_t fill, uint8_t outside);
+void lcd_dump(void);                                         // text buffer to the log
 void lcd_present(void);
