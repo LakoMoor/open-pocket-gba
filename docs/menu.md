@@ -10,6 +10,17 @@ The menu is drawn by the firmware in `fw/src/main.c` on a 42 × 24 cell OSD (16 
 |---|---|---|---|
 | ![main](img/menu_main.png) | ![display](img/menu_display.png) | ![audio](img/menu_audio.png) | ![info](img/menu_info.png) |
 
+## Themes
+
+System → Theme switches the look of the HDMI menu and the SPI LCD:
+
+| Theme | Layout | Navigation |
+|---|---|---|
+| **Ozone** (default, after RetroArch / Switch) | sidebar with categories on the left, the page on the right | up / down picks a category, right or A opens it, B or left goes back |
+| **XMB** (after the PS3 / PSP) | category icons in a row, the page below the selected one, a blue wave | left / right picks a category, down or A opens it, B goes back |
+| **Game Boy** | the four DMG greens, a framed screen, upper case | one list per page |
+| **Pocket** | full-screen list with a white rounded bar | one list per page |
+
 **Navigation:** up / down moves the bar, left / right changes a value, A selects, B goes back. L / R on a DualShock jump a page in long lists.
 
 ## Pages
@@ -56,6 +67,21 @@ All settings are stored in the SPI flash at 0x7FF000 when the menu closes.
 | internal flash | slot *n* at 0x600000 + *n* × 0x22000 (header sector + up to 128 KB) | same; only 4 KB sectors that changed are erased and written |
 
 The hardware sets a flag on every cartridge RAM write; the firmware polls it while the game runs. Saves are read back into SDRAM when the game is loaded. MBC3 real-time clocks and MBC7 EEPROMs are not saved.
+
+## Power page
+
+Every power setting can be changed on its own in **Power**; *Preset* sets them all at once (Normal or Battery) and shows *Custom* after a change. Hold **S2** for 1 s to switch between the presets.
+
+| Item | Values |
+|---|---|
+| HDMI Output | On / Off (PLL down, outputs tri-stated, no framebuffer traffic) |
+| SDRAM Power-Down | Off / On (CKE low between accesses) |
+| LCD Frame Rate | 60 / 30 fps |
+| LCD Backlight | 25 … 100 % |
+| LCD Auto-Dim | Off / 15 / 30 / 60 s |
+| Activity LEDs | Off / On |
+| Sleep Timer | Off / 5 / 15 / 30 min (sleep puts the SDRAM in self refresh) |
+| Menu CPU Polling | 200 / 500 ms |
 
 ## Battery mode
 
