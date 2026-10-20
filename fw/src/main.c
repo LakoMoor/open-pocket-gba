@@ -15,8 +15,8 @@
 #define GAMES_BASE      0x200000u
 #define SAVE_BASE       0x600000u       // 15 slots of 0x22000: header sector + up to 128 KB
 #define SAVE_SLOT       0x22000u
-#define SET_MAGIC       0x3253504Fu     // "OPS2"
-#define SET_MAGIC_V1    0x3153504Fu     // "OPS1": no speaker boost yet
+#define SET_MAGIC       0x3353504Fu     // "OPS3"
+#define SET_MAGIC_V2    0x3253504Fu     // "OPS2": older layout, converted on load
 #define CART_MAGIC      0x3143504Fu     // "OPC1"
 #define CART_ROM        0x10000u        // ROM offset in the cartridge flash
 
@@ -28,10 +28,19 @@ typedef struct {
     uint8_t  sys_mode, hdmi_off, lcd_off, led_en;
     uint8_t  autosave, toasts, boot_menu, sleep_min;
     uint8_t  last_src, last_flash, speaker, spk_boost;
-    char     last_path[224];
-    uint8_t  power_mode, rsv3[3];        // 0 normal, 1 battery
+    uint8_t  spk_mode, theme, sdram_pd, lcd_slow;      // theme: 0 Pocket, 1 Ozone, 2 XMB, 3 Game Boy
+    uint8_t  dim_idx, poll_slow, rsv[2];               // LCD auto-dim: off / 15 / 30 / 60 s
+    char     last_path[216];
     uint32_t sum;
 } settings_t;
+
+typedef struct {                                       // "OPS2" layout
+    uint32_t magic;
+    uint8_t  b[20];                                    // disp_mode .. spk_boost, same order
+    char     last_path[224];
+    uint8_t  power_mode, spk_mode, rsv[2];
+    uint32_t sum;
+} settings_v2_t;
 
 static settings_t set, set_stored;
 static uint32_t set_addr;               // 0: flash has no room for settings / saves
@@ -54,6 +63,7 @@ static void set_defaults(void) {
     set.autosave = 1;
     set.toasts = 1;
     set.spk_boost = 2;      // x4
+    set.theme = 1;          // Ozone
 }
 
 static void settings_save(void) {
@@ -75,23 +85,23 @@ static void ctrl_bits(uint32_t mask, int on) {
 
 static const uint8_t bri_duty[4] = { 3, 7, 11, 15 };
 
-// Battery mode: HDMI off (PLL down, outputs tri-stated, no framebuffer writes), LCD at
-// 25 % and nearly dark after 30 s without input, no LEDs or debug lines, sleep after 5 min.
-static int lcd_dimmed;
-static int battery(void) { return set.power_mode == 1; }
+static int lcd_dimmed;                  // LCD auto-dim active (no input for a while)
+static uint8_t preset_sel;              // Power > Preset: 0 normal, 1 battery, 2 custom
+static int preset_now(void);
+static void preset_apply(int battery_preset);
 
 static void apply_settings(void) {
-    int batt = battery();
     uint32_t duty = bri_duty[set.lcd_bri & 3];
-    if (batt && duty > 3) duty = 3;
     if (lcd_dimmed) duty = 1;
     REG_CFG = (set.disp_mode & 3) | ((set.dmg_pal & 7) << 2) | ((set.gbc_raw & 1) << 5) |
-              ((set.lcd_crop & 1) << 6) | ((uint32_t)(set.dbg_on && !batt) << 7) |
+              ((set.lcd_crop & 1) << 6) | ((uint32_t)(set.dbg_on & 1) << 7) |
               (duty << 8) | ((uint32_t)(set.volume & 7) << 12) |
-              ((uint32_t)(set.swap_ab & 1) << 15) | ((uint32_t)(set.speaker & 1) << 16) | ((uint32_t)(set.spk_boost & 3) << 17);
-    ctrl &= ~((3u << C_SYS_SHIFT) | C_HDMI_OFF | C_LCD_OFF | C_LED);
-    ctrl |= ((uint32_t)set.sys_mode << C_SYS_SHIFT) | ((set.hdmi_off || batt) ? C_HDMI_OFF : 0) |
-            (set.lcd_off ? C_LCD_OFF : 0) | ((set.led_en && !batt) ? C_LED : 0);
+              ((uint32_t)(set.swap_ab & 1) << 15) | ((uint32_t)(set.speaker & 1) << 16) |
+              ((uint32_t)(set.spk_boost & 3) << 17) | ((uint32_t)(set.spk_mode & 1) << 19);
+    ctrl &= ~((3u << C_SYS_SHIFT) | C_HDMI_OFF | C_LCD_OFF | C_LED | C_SDRAM_PD | C_LCD_SLOW);
+    ctrl |= ((uint32_t)set.sys_mode << C_SYS_SHIFT) | (set.hdmi_off ? C_HDMI_OFF : 0) |
+            (set.lcd_off ? C_LCD_OFF : 0) | (set.led_en ? C_LED : 0) |
+            (set.sdram_pd ? C_SDRAM_PD : 0) | (set.lcd_slow ? C_LCD_SLOW : 0);
     ctrl_write();
 }
 
@@ -575,8 +585,8 @@ static void do_sleep(void) {
     logf("sleep\n");
     wait_release();
     for (;;) {
-        REG_WAIT = 60000;
-        (void)REG_WAIT;
+        REG_DEEPWAIT = 60000;               // SDRAM in self refresh while waiting
+        (void)REG_DEEPWAIT;
         if (REG_IN & (K_PAD | K_S1 | K_S2 | K_UMENU)) break;
     }
     wait_release();
@@ -587,23 +597,20 @@ static void do_sleep(void) {
 }
 
 static const uint16_t sleep_minutes[4] = { 0, 5, 15, 30 };
-static uint32_t sleep_after_ms(void) {
-    uint32_t m = sleep_minutes[set.sleep_min & 3];
-    if (!m && battery()) m = 5;
-    return m * 60000u;
-}
+static uint32_t sleep_after_ms(void) { return sleep_minutes[set.sleep_min & 3] * 60000u; }
+static const uint8_t dim_seconds[4] = { 0, 15, 30, 60 };
 
 // ================================================================ menu model
 enum {
     P_MAIN, P_LIBRARY, P_BROWSER, P_DISPLAY, P_AUDIO, P_CONTROLS, P_SYSTEM, P_INFO,
-    P_CART, P_FILEACT
+    P_CART, P_FILEACT, P_GAME, P_POWER, P_SLEEP
 };
 enum {
     I_NONE, I_RESUME, I_LIBRARY, I_SAVE, I_RESET, I_PG_DISPLAY, I_PG_AUDIO, I_PG_CONTROLS,
     I_PG_SYSTEM, I_PG_INFO, I_SLEEP_NOW,
     I_SRC_SD, I_SRC_FLASH, I_FLASH_GAME, I_FILE, I_DIR, I_UP,
     I_OPT, I_DEFAULTS, I_INFO,
-    I_SRC_CART, I_PLAY_CART, I_ERASE_CART, I_PLAY_SD, I_WRITE_CART
+    I_SRC_CART, I_PLAY_CART, I_ERASE_CART, I_PLAY_SD, I_WRITE_CART, I_PG_POWER
 };
 
 typedef struct {
@@ -635,7 +642,12 @@ static const char *const o_sys[]   = { "Auto", "Game Boy Color", "Game Boy" };
 static const char *const o_boot[]  = { "Last Game", "Menu" };
 static const char *const o_sleep[] = { "Off", "5 min", "15 min", "30 min" };
 static const char *const o_boost[] = { "x1", "x2", "x4", "x8" };
-static const char *const o_power[] = { "Normal", "Battery" };
+static const char *const o_preset[] = { "Normal", "Battery", "Custom" };
+static const char *const o_theme[] = { "Pocket", "Ozone (Switch)", "XMB (PS3)", "Game Boy" };
+static const char *const o_fps[]   = { "60 fps", "30 fps" };
+static const char *const o_dim[]   = { "Off", "15 s", "30 s", "60 s" };
+static const char *const o_poll[]  = { "200 ms", "500 ms" };
+static const char *const o_spkmode[] = { "PWM 66 kHz", "Sigma-delta" };
 
 static item_t *add(uint8_t id, uint8_t icon, const char *label, const char *desc) {
     if (nitems >= MAX_ITEMS) return &items[MAX_ITEMS - 1];
@@ -728,11 +740,41 @@ static void build_page(void) {
         add(I_PG_DISPLAY, G_DISPLAY, "Display", "Display mode, palettes, HDMI and LCD.");
         add(I_PG_AUDIO, G_AUDIO, "Audio", "Volume and the buzzer / speaker output.");
         add(I_PG_CONTROLS, G_PAD, "Controls", "Button layout and shortcuts.");
-        add(I_PG_SYSTEM, G_GEAR, "System", "Model, saves, start-up, power.");
+        add(I_PG_SYSTEM, G_GEAR, "System", "Theme, model, saves, start-up.");
+        add(I_PG_POWER, G_POWER, "Power", "Battery preset and every power saving setting.");
         add(I_PG_INFO, G_INFO, "Info", "Game, storage and system information.");
         add(I_SLEEP_NOW, G_MOON, "Sleep", "Pause and switch off HDMI and the LCD. Press any button to wake up.");
         break;
     }
+    case P_GAME: {
+        strcpy(page_title, game.name);
+        item_t *it = add(I_RESUME, G_PLAY, "Resume", "Return to the game.");
+        (void)it;
+        if (game.battery && game.save_bytes) {
+            it = add(I_SAVE, G_SAVE, "Save Game", "Write the cartridge save now. Autosave also does this on its own.");
+            if (game.save_pending) strcpy(it->value, "Unsaved");
+            else if (game.saved_once) sfmt(it->value, sizeof it->value, "%us ago", (ms_now() - game.saved_ms) / 1000);
+        }
+        add(I_RESET, G_RESET, "Reset Game", "Restart the game. The save is written first.");
+        break;
+    }
+    case P_SLEEP:
+        strcpy(page_title, "Sleep");
+        add(I_SLEEP_NOW, G_MOON, "Sleep Now", "Pause, switch off HDMI and the LCD, SDRAM in self refresh. Any button wakes up.");
+        break;
+    case P_POWER:
+        strcpy(page_title, "Power");
+        preset_sel = preset_now();
+        add_opt(G_POWER, "Preset", "Normal or Battery sets everything below. Hold S2 to switch.", &preset_sel, 3, o_preset);
+        add_opt(G_DISPLAY, "HDMI Output", "Off: PLL powered down, outputs tri-stated, no framebuffer traffic.", &set.hdmi_off, 2, o_onoff);
+        add_opt(G_FLASH, "SDRAM Power-Down", "SDRAM sleeps between accesses (2 cycles more latency).", &set.sdram_pd, 2, o_offon);
+        add_opt(G_DISPLAY, "LCD Frame Rate", "30 fps halves the SPI traffic to the LCD.", &set.lcd_slow, 2, o_fps);
+        add_opt(G_POWER, "LCD Backlight", "The backlight is the largest consumer on the LCD.", &set.lcd_bri, 4, o_bri);
+        add_opt(G_MOON, "LCD Auto-Dim", "Backlight almost off after this long without input.", &set.dim_idx, 4, o_dim);
+        add_opt(G_POWER, "Activity LEDs", "Board LEDs while loading and in the menu.", &set.led_en, 2, o_offon);
+        add_opt(G_MOON, "Sleep Timer", "Sleep after this long without a button press.", &set.sleep_min, 4, o_sleep);
+        add_opt(G_GEAR, "Menu CPU Polling", "How often the menu CPU wakes up while a game runs.", &set.poll_slow, 2, o_poll);
+        break;
     case P_LIBRARY: {
         strcpy(page_title, "Library");
         item_t *it = add(I_SRC_SD, G_SDCARD, "SD Card", ".gb / .gbc files on a FAT32 or exFAT card. Saves go next to the ROM.");
@@ -795,6 +837,7 @@ static void build_page(void) {
         strcpy(page_title, "Audio");
         add_opt(G_AUDIO, "Volume", "Volume for HDMI audio and the speaker.", &set.volume, 5, o_vol);
         add_opt(G_AUDIO, "Speaker", "Buzzer or small speaker on pins 76 / 75 (sigma-delta audio).", &set.speaker, 2, o_offon);
+        add_opt(G_AUDIO, "Speaker Signal", "PWM suits buzzers and transistors; sigma-delta needs an RC filter or amp.", &set.spk_mode, 2, o_spkmode);
         add_opt(G_AUDIO, "Speaker Boost", "Extra gain for the speaker. Too high clips loud sounds.", &set.spk_boost, 4, o_boost);
         break;
     case P_CONTROLS:
@@ -803,17 +846,16 @@ static void build_page(void) {
         add_info("Open menu", "SELECT + START, S1");
         add_info("HDMI on / off", "Hold S1");
         add_info("Reset game", "S2");
+        add_info("Battery preset", "Hold S2");
         add_info("Navigate", "D-pad, A, B");
         break;
     case P_SYSTEM:
         strcpy(page_title, "System");
+        add_opt(G_STAR, "Theme", "Pocket, Ozone (Switch), XMB (PS3) or Game Boy look for the menu.", &set.theme, 4, o_theme);
         add_opt(G_CART, "Model", "Auto follows the cartridge header. Applies when the game is reset.", &set.sys_mode, 3, o_sys);
         add_opt(G_SAVE, "Autosave", "Write the save 2 s after the game changes it, and when the menu opens.", &set.autosave, 2, o_offon);
         add_opt(G_CHECK, "Save Notifications", "Show a short message when the save was written.", &set.toasts, 2, o_offon);
         add_opt(G_PLAY, "Start-up", "Start the last game or open the menu at power-up.", &set.boot_menu, 2, o_boot);
-        add_opt(G_MOON, "Sleep Timer", "Sleep after this long without a button press.", &set.sleep_min, 4, o_sleep);
-        add_opt(G_POWER, "Power Mode", "Battery: HDMI off, LCD dimmed, no LEDs, sleep after 5 min. Hold S2 to toggle.", &set.power_mode, 2, o_power);
-        add_opt(G_POWER, "Activity LEDs", "Board LEDs while loading and in the menu. Off saves a little power.", &set.led_en, 2, o_offon);
         add(I_DEFAULTS, G_RESET, "Reset Settings", "Restore all settings to their defaults.");
         break;
     case P_INFO: {
@@ -842,138 +884,281 @@ static void build_page(void) {
     }
 }
 
+// ---------------------------------------------------------------- themes
+// Pocket and Game Boy: one list per page. Ozone (sidebar) and XMB (category bar): the
+// categories are a second level; focus 0 = categories, 1 = the page of the category.
+enum { TH_POCKET, TH_OZONE, TH_XMB, TH_GAMEBOY };
+static int two_level(void) { return set.theme == TH_OZONE || set.theme == TH_XMB; }
+
+typedef struct { uint8_t icon; const char *name; uint8_t page; } cat_t;
+static cat_t cats[10];
+static int ncats, cat, focus;
+
+static void build_cats(void) {
+    ncats = 0;
+    if (game.loaded) cats[ncats++] = (cat_t){ G_PLAY, "Game", P_GAME };
+    cats[ncats++] = (cat_t){ G_LIBRARY, "Library", P_LIBRARY };
+    cats[ncats++] = (cat_t){ G_DISPLAY, "Display", P_DISPLAY };
+    cats[ncats++] = (cat_t){ G_AUDIO, "Audio", P_AUDIO };
+    cats[ncats++] = (cat_t){ G_PAD, "Controls", P_CONTROLS };
+    cats[ncats++] = (cat_t){ G_GEAR, "System", P_SYSTEM };
+    cats[ncats++] = (cat_t){ G_POWER, "Power", P_POWER };
+    cats[ncats++] = (cat_t){ G_INFO, "Info", P_INFO };
+    cats[ncats++] = (cat_t){ G_MOON, "Sleep", P_SLEEP };
+    if (cat >= ncats) cat = 0;
+}
+
 static int selectable(int i) { return items[i].id != I_INFO; }
 
-// ---------------------------------------------------------------- drawing
-#define LIST_Y   4
-#define LIST_N   14
-#define LIST_X   2
-#define LIST_W   38
+// value text of an item (options: the current choice)
+static const char *item_value(item_t *it, int sel, char *buf, int n) {
+    if (it->id == I_OPT) {
+        if (sel) { sfmt(buf, n, "%c %s %c", G_CHEV_L, it->opts[*it->val], G_CHEV_R); return buf; }
+        return it->opts[*it->val];
+    }
+    if (it->id == I_DIR || (it->id >= I_PG_DISPLAY && it->id <= I_PG_INFO) || it->id == I_PG_POWER ||
+        it->id == I_LIBRARY || it->id == I_SRC_SD || it->id == I_SRC_FLASH) {
+        if (!it->value[0] || it->id == I_DIR) { buf[0] = G_CHEV_R; buf[1] = 0; return buf; }
+    }
+    return it->value;
+}
 
-static void draw_menu(void) {
-    uint8_t bg = CL_SHADE;
-    osd_clear(AT(CL_WHITE, bg));
-    // header
-    osd_put(2, 1, G_STAR, AT(CL_BLUE, bg));
-    int x = osd_text(4, 1, "Open Pocket", AT(CL_WHITE, bg));
-    (void)x;
-    char path[48];
-    if (page == P_BROWSER && page_title[0] != 'I') {
-        int n = (int)strlen(cur_dir);
-        const char *p = n > 22 ? cur_dir + n - 22 : cur_dir;
-        sfmt(path, sizeof path, "SD %s", p);
-        osd_rtext(36, 1, path, AT(CL_GREY, bg));
-    } else osd_rtext(36, 1, page_title, AT(CL_GREY, bg));
-    osd_put(37, 1, G_SDCARD, AT(sd_mounted ? CL_GREEN : CL_LINE, bg));
-    osd_put(39, 1, G_DISPLAY, AT(set.hdmi_off ? CL_LINE : CL_GREEN, bg));
-    osd_fill(2, 2, 38, G_HLINE, AT(CL_LINE, bg));
+// word-wrapped description, up to `lines` lines of width w
+static void draw_desc(int x, int y, int w, int lines, uint8_t attr) {
+    if (cursor >= nitems || !items[cursor].desc) return;
+    const char *d = items[cursor].desc;
+    for (int line = 0; *d && line < lines; line++) {
+        int n = (int)strlen(d), cut = n;
+        if (n > w) { cut = w; while (cut > 0 && d[cut] != ' ') cut--; if (!cut) cut = w; }
+        osd_textn(x, y + line, d, cut, attr);
+        d += cut;
+        while (*d == ' ') d++;
+    }
+}
 
-    // list
+static void upcase(char *d, const char *s, int n) {
+    int i = 0;
+    for (; s[i] && i < n - 1; i++) d[i] = (s[i] >= 'a' && s[i] <= 'z') ? s[i] - 32 : s[i];
+    d[i] = 0;
+}
+
+// List drawing shared by the themes.
+typedef struct {
+    uint8_t bg, fg, label_sel, icon, icon_sel, val, val_sel, info_label, sel_fill;
+    uint8_t pill, bar, caps;     // rounded selection, Ozone-style bar, upper case labels
+} lstyle_t;
+
+static void draw_list(int x0, int y0, int w, int rows, const lstyle_t *st, int show_sel) {
     if (cursor < scroll) scroll = cursor;
-    if (cursor >= scroll + LIST_N) scroll = cursor - LIST_N + 1;
-    for (int r = 0; r < LIST_N; r++) {
+    if (cursor >= scroll + rows) scroll = cursor - rows + 1;
+    for (int r = 0; r < rows; r++) {
         int i = scroll + r;
         if (i >= nitems) break;
         item_t *it = &items[i];
-        int y = LIST_Y + r;
-        int sel = (i == cursor) && selectable(i);
-        uint8_t fill = CL_WHITE;
-        uint8_t tbg = sel ? fill : bg;
-        uint8_t fg = sel ? CL_BLACK : CL_WHITE;
-        uint8_t dim = sel ? CL_PANEL : CL_GREY;
-        if (sel) osd_pill(LIST_X, y, LIST_W, fill, bg);
-        int lx = LIST_X + 2;
-        if (it->icon) { osd_put(lx, y, it->icon, AT(sel ? CL_BLUE : CL_LIGHT, tbg)); lx += 2; }
-        const char *val = it->value;
-        char vb[40];
-        if (it->id == I_OPT) {
-            if (sel) { sfmt(vb, sizeof vb, "%c %s %c", G_CHEV_L, it->opts[*it->val], G_CHEV_R); val = vb; }
-            else val = it->opts[*it->val];
-        } else if (it->id == I_DIR || (it->id >= I_PG_DISPLAY && it->id <= I_PG_INFO) || it->id == I_LIBRARY ||
-                   it->id == I_SRC_SD || it->id == I_SRC_FLASH) {
-            if (!val[0] || it->id == I_DIR) { vb[0] = G_CHEV_R; vb[1] = 0; val = vb; }
+        int y = y0 + r;
+        int sel = show_sel && i == cursor && selectable(i);
+        uint8_t tb = sel ? st->sel_fill : st->bg;
+        if (sel) {
+            if (st->pill) osd_pill(x0, y, w, st->sel_fill, st->bg);
+            else osd_fill(x0, y, w, ' ', AT(st->fg, st->sel_fill));
+            if (st->bar) osd_put(x0, y, G_THUMB | EXT, AT(CL_BLUE, st->sel_fill));
         }
+        int lx = x0 + 2;
+        if (it->icon) { osd_put(lx, y, it->icon, AT(sel ? st->icon_sel : st->icon, tb)); lx += 2; }
+        char vb[44], lb[44];
+        const char *val = item_value(it, sel, vb, sizeof vb);
         int vlen = (int)strlen(val);
-        int maxl = LIST_X + LIST_W - 2 - lx - (vlen ? vlen + 2 : 0);
         if (it->id == I_INFO) {
-            osd_textn(lx, y, it->label, 13, AT(CL_GREY, tbg));
-            osd_textn(LIST_X + 15, y, val, LIST_W - 16, AT(CL_WHITE, tbg));
+            osd_textn(lx, y, it->label, 13, AT(st->info_label, tb));
+            osd_textn(x0 + 15, y, val, w - 16, AT(sel ? st->val_sel : st->fg, tb));
             continue;
         }
-        if (it->id == I_OPT && it->val == &set.volume) {
-            // volume as a row of squares
-            for (int k = 0; k < 4; k++) osd_put(LIST_X + LIST_W - 2 - vlen - 6 + k, y, k < set.volume ? G_SQ_FULL : G_SQ_EMPTY, AT(sel ? CL_BLUE : CL_LIGHT, tbg));
-        }
-        osd_textn(lx, y, it->label, maxl, AT(fg, tbg));
-        if (vlen) osd_text(LIST_X + LIST_W - 2 - vlen, y, val, AT(it->id == I_RESUME && !sel ? CL_GREY : (sel ? CL_BLACK : dim == CL_GREY ? CL_LIGHT : dim), tbg));
+        if (vlen > w - 12) { val += vlen - (w - 12); vlen = w - 12; }
+        if (it->id == I_OPT && it->val == &set.volume)
+            for (int k = 0; k < 4; k++)
+                osd_put(x0 + w - 2 - vlen - 6 + k, y, k < set.volume ? G_SQ_FULL : G_SQ_EMPTY, AT(sel ? st->icon_sel : st->icon, tb));
+        int maxl = x0 + w - 2 - lx - (vlen ? vlen + 2 : 0);
+        if (st->caps) { upcase(lb, it->label, sizeof lb); osd_textn(lx, y, lb, maxl, AT(sel ? st->label_sel : st->fg, tb)); }
+        else osd_textn(lx, y, it->label, maxl, AT(sel ? st->label_sel : st->fg, tb));
+        if (vlen) osd_text(x0 + w - 2 - vlen, y, val, AT(sel ? st->val_sel : st->val, tb));
     }
-    // scroll bar
-    if (nitems > LIST_N) {
-        int th = LIST_N * LIST_N / nitems;
+    if (nitems > rows) {                         // scroll bar
+        int th = rows * rows / nitems;
         if (th < 1) th = 1;
-        int ty = (LIST_N - th) * scroll / (nitems - LIST_N);
-        for (int r = 0; r < LIST_N; r++)
-            osd_put(LIST_X + LIST_W, LIST_Y + r, (r >= ty && r < ty + th ? G_THUMB : G_TRACK) | EXT,
-                    AT(r >= ty && r < ty + th ? CL_LIGHT : CL_LINE, bg));
+        int ty = (rows - th) * scroll / (nitems - rows);
+        for (int r = 0; r < rows; r++)
+            osd_put(x0 + w, y0 + r, (r >= ty && r < ty + th ? G_THUMB : G_TRACK) | EXT,
+                    AT(r >= ty && r < ty + th ? st->val : st->info_label, st->bg));
     }
-    if (nitems == 0) osd_text(LIST_X + 2, LIST_Y, page == P_BROWSER ? "No games in this folder" : "Empty", AT(CL_GREY, bg));
+    if (nitems == 0) osd_text(x0 + 2, y0, page == P_BROWSER ? "No games in this folder" : "Empty", AT(st->val, st->bg));
+}
 
-    // description
+static const char *title_now(char *buf, int n) {
+    if (page == P_BROWSER && page_title[0] != 'I') {
+        int l = (int)strlen(cur_dir);
+        sfmt(buf, n, "SD %s", l > 20 ? cur_dir + l - 20 : cur_dir);
+        return buf;
+    }
+    return page_title;
+}
+
+static void status_icons(int x, int y, uint8_t bg, uint8_t on, uint8_t off) {
+    osd_put(x, y, G_SDCARD, AT(sd_mounted ? on : off, bg));
+    osd_put(x + 2, y, G_DISPLAY, AT(set.hdmi_off ? off : on, bg));
+}
+
+// ---- Pocket
+static void draw_pocket(void) {
+    uint8_t bg = CL_SHADE;
+    char tb[48];
+    osd_clear(AT(CL_WHITE, bg));
+    osd_put(2, 1, G_STAR, AT(CL_BLUE, bg));
+    osd_text(4, 1, "Open Pocket", AT(CL_WHITE, bg));
+    osd_rtext(36, 1, title_now(tb, sizeof tb), AT(CL_GREY, bg));
+    status_icons(37, 1, bg, CL_GB3, CL_LINE);
+    osd_fill(2, 2, 38, G_HLINE, AT(CL_LINE, bg));
+    static const lstyle_t st = { CL_SHADE, CL_WHITE, CL_BLACK, CL_LIGHT, CL_BLUE, CL_LIGHT, CL_BLACK, CL_GREY, CL_WHITE, 1, 0, 0 };
+    draw_list(2, 4, 38, 14, &st, 1);
     osd_fill(2, 19, 38, G_HLINE, AT(CL_LINE, bg));
-    if (cursor < nitems && items[cursor].desc) {
-        const char *d = items[cursor].desc;
-        int line = 0;
-        while (*d && line < 2) {
-            int n = (int)strlen(d), cut = n;
-            if (n > 38) { cut = 38; while (cut > 0 && d[cut] != ' ') cut--; if (!cut) cut = 38; }
-            osd_textn(2, 20 + line, d, cut, AT(CL_LIGHT, bg));
-            d += cut;
-            while (*d == ' ') d++;
-            line++;
-        }
-    }
-    // footer
-    int fx = 2;
-    hint(fx, 22, "A", "Select", bg); fx += 11;
-    hint(fx, 22, "B", page == P_MAIN ? "Close" : "Back", bg); fx += 10;
-    if (page == P_MAIN && game.loaded) hint(fx, 22, "START", "Resume", bg);
-    osd_present();
+    draw_desc(2, 20, 38, 2, AT(CL_LIGHT, bg));
+    hint(2, 22, "A", "Select", bg);
+    hint(13, 22, "B", page == P_MAIN ? "Close" : "Back", bg);
+    if (page == P_MAIN && game.loaded) hint(23, 22, "START", "Resume", bg);
+}
 
-    // SPI LCD: title bar, 10 list rows, value / hint row
+// ---- Game Boy (DMG greens, framed, upper case)
+static void draw_gameboy(void) {
+    uint8_t in = CL_GB3, fr = CL_GB0;
+    char tb[48], up[48];
+    osd_clear(AT(fr, fr));
+    for (int y = 2; y < 21; y++) osd_fill(2, y, 38, ' ', AT(fr, in));
+    upcase(up, page == P_MAIN ? "Open Pocket" : title_now(tb, sizeof tb), sizeof up);
+    osd_text(21 - (int)strlen(up) / 2, 1, up, AT(in, fr));
+    static const lstyle_t st = { CL_GB3, CL_GB0, CL_GB3, CL_GB1, CL_GB3, CL_GB1, CL_GB2, CL_GB1, CL_GB0, 0, 0, 1 };
+    draw_list(2, 3, 38, 13, &st, 1);
+    osd_fill(3, 17, 36, G_HLINE, AT(CL_GB1, in));
+    draw_desc(3, 18, 36, 2, AT(CL_GB1, in));
+    osd_text(3, 22, "A SELECT", AT(in, fr));
+    osd_text(14, 22, page == P_MAIN ? "B CLOSE" : "B BACK", AT(in, fr));
+    osd_text(28, 22, "OPEN POCKET", AT(CL_GB2, fr));
+}
+
+// ---- Ozone (Switch): sidebar with categories, page on the right
+static void draw_ozone(void) {
+    uint8_t sb = CL_PANEL, bg = CL_SHADE;
+    char tb[48];
+    osd_clear(AT(CL_WHITE, bg));
+    for (int y = 0; y < OSD_H; y++) osd_fill(0, y, 11, ' ', AT(CL_WHITE, sb));
+    for (int y = 0; y < OSD_H; y++) osd_put(11, y, G_TRACK | EXT, AT(CL_LINE, bg));
+    osd_put(1, 1, G_STAR, AT(CL_BLUE, sb));
+    osd_text(3, 1, "Pocket", AT(CL_WHITE, sb));
+    for (int i = 0; i < ncats; i++) {
+        int y = 4 + i * 2, s = (i == cat);
+        uint8_t b = (s && focus == 0) ? CL_LINE : sb;
+        if (s && focus == 0) osd_fill(0, y, 11, ' ', AT(CL_WHITE, b));
+        if (s) osd_put(0, y, G_THUMB | EXT, AT(CL_BLUE, b));
+        osd_put(2, y, cats[i].icon, AT(s ? CL_BLUE : CL_GREY, b));
+        osd_text(4, y, cats[i].name, AT(s ? CL_BLUE : CL_LIGHT, b));
+    }
+    osd_textn(13, 1, title_now(tb, sizeof tb), 23, AT(CL_WHITE, bg));
+    status_icons(37, 1, bg, CL_GB3, CL_LINE);
+    osd_fill(13, 2, 28, G_HLINE, AT(CL_LINE, bg));
+    static const lstyle_t st = { CL_SHADE, CL_WHITE, CL_WHITE, CL_GREY, CL_BLUE, CL_GREY, CL_BLUE, CL_GREY, CL_LINE, 0, 1, 0 };
+    draw_list(13, 4, 27, 14, &st, focus == 1);
+    osd_fill(13, 18, 28, G_HLINE, AT(CL_LINE, bg));
+    if (focus == 1) draw_desc(13, 19, 28, 3, AT(CL_LIGHT, bg));
+    else osd_text(13, 19, "Right / A: open", AT(CL_GREY, bg));
+    hint(13, 22, "A", focus ? "OK" : "Open", bg);
+    hint(23, 22, "B", focus ? "Back" : "Close", bg);
+}
+
+// ---- XMB (PS3 / PSP): category icons in a row, the page below the selected one
+static void draw_xmb(void) {
+    uint8_t bg = CL_NAVY;
+    char tb[48];
+    osd_clear(AT(CL_WHITE, bg));
+    // a calm "wave" across the bottom
+    for (int x = 0; x < OSD_W; x++) {
+        osd_put(x, 20 + ((x / 7) & 1), G_HLINE, AT(CL_BLUE, bg));
+        osd_put(x, 21 - ((x / 9) & 1), G_HLINE, AT(CL_LINE, bg));
+    }
+    osd_rtext(40, 1, game.loaded ? game.name : "Open Pocket", AT(CL_GREY, bg));
+    const int cx = 8;                            // column of the selected category
+    for (int i = 0; i < ncats; i++) {
+        int x = cx + (i - cat) * 6;
+        if (x < 1 || x > 39) continue;
+        int s = (i == cat);
+        osd_put(x, 3, cats[i].icon, AT(s ? CL_WHITE : CL_GREY, bg));
+        if (s) osd_text(x - (int)strlen(cats[i].name) / 2 + 1 > 0 ? x - (int)strlen(cats[i].name) / 2 : 0, 4,
+                        cats[i].name, AT(focus == 0 ? CL_WHITE : CL_LIGHT, bg));
+    }
+    if (page != cats[cat].page) osd_text(cx + 2, 6, title_now(tb, sizeof tb), AT(CL_LIGHT, bg));
+    static const lstyle_t st = { CL_NAVY, CL_GREY, CL_WHITE, CL_GREY, CL_WHITE, CL_GREY, CL_WHITE, CL_GREY, CL_BLUE, 1, 0, 0 };
+    draw_list(cx - 2, 7, 34, 11, &st, focus == 1);
+    if (focus == 1) draw_desc(cx, 18, 32, 2, AT(CL_LIGHT, bg));
+    osd_text(2, 22, focus ? "A ok   B back" : "\x05 \x04 category   A open", AT(CL_GREY, bg));
+}
+
+// ---- SPI LCD (16 x 12), coloured per theme
+static void draw_lcd(void) {
+    uint8_t bg, hb, hf, sf, sfg, ic, ics, fg, val;
+    switch (set.theme) {
+    case TH_GAMEBOY: bg = CL_GB3; hb = CL_GB0; hf = CL_GB3; sf = CL_GB0; sfg = CL_GB3; ic = CL_GB1; ics = CL_GB3; fg = CL_GB0; val = CL_GB1; break;
+    case TH_XMB:     bg = CL_NAVY; hb = CL_BLUE; hf = CL_WHITE; sf = CL_BLUE; sfg = CL_WHITE; ic = CL_GREY; ics = CL_WHITE; fg = CL_LIGHT; val = CL_YELLOW; break;
+    case TH_OZONE:   bg = CL_SHADE; hb = CL_PANEL; hf = CL_WHITE; sf = CL_LINE; sfg = CL_WHITE; ic = CL_GREY; ics = CL_BLUE; fg = CL_WHITE; val = CL_BLUE; break;
+    default:         bg = CL_SHADE; hb = CL_NAVY; hf = CL_WHITE; sf = CL_WHITE; sfg = CL_BLACK; ic = CL_GREY; ics = CL_BLUE; fg = CL_WHITE; val = CL_YELLOW; break;
+    }
+    char b[24];
+    lcd_clear(AT(fg, bg));
+    for (int x = 0; x < LCD_W; x++) lcd_put(x, 0, ' ', AT(hf, hb));
+    if (two_level() && focus == 0) {
+        lcd_text(1, 0, "Open Pocket", AT(hf, hb));
+        int ls = cat >= 10 ? cat - 9 : 0;
+        for (int r = 0; r < 10 && ls + r < ncats; r++) {
+            int i = ls + r, y = 1 + r, s = (i == cat);
+            if (s) lcd_pill(y, sf, bg);
+            lcd_put(1, y, cats[i].icon, AT(s ? ics : ic, s ? sf : bg));
+            lcd_text(3, y, cats[i].name, AT(s ? sfg : fg, s ? sf : bg));
+        }
+        lcd_text(1, 11, "A open  B close", AT(ic, bg));
+        lcd_present();
+        return;
+    }
     const char *lt = page == P_MAIN ? "Open Pocket" : page == P_BROWSER ? (page_title[0] == 'I' ? "Flash" : "SD Card") : page_title;
-    lcd_header(lt);
-    int lrows = 10, ls = 0;
-    if (cursor >= lrows) ls = cursor - lrows + 1;
+    sfmt(b, 15, "%s", lt);
+    lcd_text(1, 0, b, AT(hf, hb));
+    int lrows = 10, ls = cursor >= lrows ? cursor - lrows + 1 : 0;
     for (int r = 0; r < lrows && ls + r < nitems; r++) {
         item_t *it = &items[ls + r];
-        int y = 1 + r, sel = (ls + r == cursor) && selectable(ls + r);
-        uint8_t tb = sel ? CL_WHITE : CL_SHADE;
-        char b[17];
-        if (sel) lcd_pill(y, CL_WHITE, CL_SHADE);
-        if (it->id == I_INFO) {
-            sfmt(b, 16, "%s", it->value);
-            lcd_text(1, y, b, AT(CL_LIGHT, tb));
-            continue;
-        }
-        if (it->icon) lcd_put(1, y, it->icon, AT(sel ? CL_BLUE : CL_GREY, tb));
+        int y = 1 + r, s = (ls + r == cursor) && selectable(ls + r);
+        uint8_t tbg = s ? sf : bg;
+        if (s) lcd_pill(y, sf, bg);
+        if (it->id == I_INFO) { sfmt(b, 16, "%s", it->value); lcd_text(1, y, b, AT(val, tbg)); continue; }
+        if (it->icon) lcd_put(1, y, it->icon, AT(s ? ics : ic, tbg));
         sfmt(b, 13, "%s", it->label);
-        lcd_text(3, y, b, AT(sel ? CL_BLACK : CL_WHITE, tb));
-    }
-    if (nitems > lrows) {                       // scroll position on the right edge
-        int ty = 1 + (lrows - 1) * ls / (nitems - lrows);
-        if (!(cursor - ls == ty - 1)) lcd_put(15, ty, G_THUMB | EXT, AT(CL_LIGHT, CL_SHADE));
+        if (set.theme == TH_GAMEBOY) upcase(b, b, 13);
+        lcd_text(3, y, b, AT(s ? sfg : fg, tbg));
     }
     if (cursor < nitems) {
         item_t *it = &items[cursor];
-        char b[24];
-        uint8_t at = AT(CL_GREY, CL_SHADE);
-        if (it->id == I_OPT) { sfmt(b, sizeof b, "%c %s %c", G_CHEV_L, it->opts[*it->val], G_CHEV_R); at = AT(CL_YELLOW, CL_SHADE); }
+        if (it->id == I_OPT) sfmt(b, sizeof b, "%c %s %c", G_CHEV_L, it->opts[*it->val], G_CHEV_R);
         else if (it->value[0] && it->id != I_INFO) sfmt(b, sizeof b, "%s", it->value);
         else sfmt(b, sizeof b, "A ok  B back");
         b[16] = 0;
-        lcd_text(8 - (int)strlen(b) / 2, 11, b, at);
+        lcd_text(8 - (int)strlen(b) / 2, 11, b, AT(it->id == I_OPT ? val : ic, bg));
     }
     lcd_present();
+}
+
+static void draw_menu(void) {
+    switch (set.theme) {
+    case TH_OZONE:   draw_ozone(); break;
+    case TH_XMB:     draw_xmb(); break;
+    case TH_GAMEBOY: draw_gameboy(); break;
+    default:         draw_pocket(); break;
+    }
+    osd_present();
+    draw_lcd();
 }
 
 // ---------------------------------------------------------------- navigation
@@ -986,9 +1171,43 @@ static void go(int p, int keep_cursor) {
     if (cursor >= nitems) cursor = nitems ? nitems - 1 : 0;
 }
 
-static int opt_changed(item_t *it) {
+// the top page: main list, or the root page of the current category
+static void go_home(int keep) {
+    if (two_level()) { build_cats(); go(cats[cat].page, keep); }
+    else go(P_MAIN, keep);
+}
+
+// power presets
+static void preset_apply(int battery_preset) {
+    if (battery_preset) {
+        set.hdmi_off = 1; set.sdram_pd = 1; set.lcd_slow = 1; set.lcd_bri = 0;
+        set.dim_idx = 2; set.led_en = 0; set.sleep_min = 1; set.poll_slow = 1; set.dbg_on = 0;
+    } else {
+        set.hdmi_off = 0; set.sdram_pd = 0; set.lcd_slow = 0; set.lcd_bri = 3;
+        set.dim_idx = 0; set.sleep_min = 0; set.poll_slow = 0;
+    }
+    lcd_dimmed = 0;
     apply_settings();
-    return it != 0;
+}
+static int preset_now(void) {
+    if (set.hdmi_off && set.sdram_pd && set.lcd_slow && set.lcd_bri == 0 && set.dim_idx == 2 && !set.led_en &&
+        set.sleep_min == 1 && set.poll_slow) return 1;
+    if (!set.hdmi_off && !set.sdram_pd && !set.lcd_slow && set.lcd_bri == 3 && !set.dim_idx && !set.sleep_min &&
+        !set.poll_slow) return 0;
+    return 2;
+}
+
+static int opt_changed(item_t *it) {
+    if (it->val == &preset_sel) {
+        if (preset_sel == 2) preset_sel = (it->nopt == 3) ? 0 : 0;   // "Custom" is not a target
+        preset_apply(preset_sel == 1);
+        go(P_POWER, 1);
+        return 1;
+    }
+    if (it->val == &set.theme) { osd_invalidate(); build_cats(); }
+    apply_settings();
+    if (page == P_POWER) go(P_POWER, 1);              // refresh the preset value
+    return 1;
 }
 
 // returns 1 when the menu should close
@@ -1001,7 +1220,8 @@ static int activate(item_t *it, int dir) {
         int r = save_write();
         message_screen(r >= 0 ? "Saved" : "Save failed", game.name);
         wait_ms(700);
-        go(P_MAIN, 1);
+        osd_invalidate();
+        go(page, 1);
         break;
     }
     case I_RESET: reset_game(); return 1;
@@ -1010,10 +1230,11 @@ static int activate(item_t *it, int dir) {
     case I_PG_CONTROLS: go(P_CONTROLS, 0); break;
     case I_PG_SYSTEM: go(P_SYSTEM, 0); break;
     case I_PG_INFO: go(P_INFO, 0); break;
-    case I_SLEEP_NOW: do_sleep(); osd_invalidate(); go(P_MAIN, 1); break;
+    case I_PG_POWER: go(P_POWER, 0); break;
+    case I_SLEEP_NOW: do_sleep(); osd_invalidate(); go(page, 1); break;
     case I_SRC_SD:
         if (!sd_mounted) { message_screen("Reading SD card", ""); sd_mount(); }
-        if (!sd_mounted) { message_screen("No SD card", "Insert a FAT32 or exFAT card"); wait_ms(1500); go(P_LIBRARY, 1); break; }
+        if (!sd_mounted) { message_screen("No SD card", "Insert a FAT32 or exFAT card"); wait_ms(1500); osd_invalidate(); go(P_LIBRARY, 1); break; }
         page_title[0] = 'S';
         strcpy(cur_dir, "/");
         go(P_BROWSER, 0);
@@ -1059,6 +1280,7 @@ static int activate(item_t *it, int dir) {
     case I_SRC_CART:
         message_screen("Reading cartridge", "");
         cart_probe();
+        osd_invalidate();
         go(P_CART, 0);
         break;
     case I_PLAY_CART:
@@ -1076,10 +1298,12 @@ static int activate(item_t *it, int dir) {
         flash_select(0);
         cart_probe();
         if (game.loaded && game.src == 3) game.battery = 0;    // nowhere to save any more
+        osd_invalidate();
         go(P_CART, 0);
         break;
     case I_FLASH_GAME:
         if (load_game(1, it->arg, 0) == 0) return 1;
+        osd_invalidate();
         go(P_BROWSER, 1);
         break;
     case I_OPT:
@@ -1097,6 +1321,8 @@ static int activate(item_t *it, int dir) {
         apply_settings();
         message_screen("Settings restored", "");
         wait_ms(700);
+        osd_invalidate();
+        build_cats();
         go(P_SYSTEM, 1);
         break;
     }
@@ -1104,8 +1330,11 @@ static int activate(item_t *it, int dir) {
     return 0;
 }
 
-static void back(void) {
+// B: one level up; returns 1 when the menu should close
+static int back(void) {
+    if (two_level() && page == cats[cat].page) { focus = 0; return 0; }
     switch (page) {
+    case P_MAIN: return game.loaded;
     case P_BROWSER:
         if (page_title[0] != 'I' && strcmp(cur_dir, "/")) {
             char *sl = strrchr(cur_dir, '/');
@@ -1113,7 +1342,6 @@ static void back(void) {
             go(P_BROWSER, 0);
         } else { go(P_LIBRARY, 0); cursor = page_title[0] == 'I' ? 1 : 0; }
         break;
-    case P_LIBRARY: go(P_MAIN, 0); cursor = game.loaded ? 1 : 0; break;
     case P_CART: go(P_LIBRARY, 0); cursor = 2; break;
     case P_FILEACT:
         page_title[0] = 'S';
@@ -1122,14 +1350,17 @@ static void back(void) {
         scroll = br_scroll;
         break;
     default: {
+        if (two_level()) { go_home(0); break; }
         int from = page;
         go(P_MAIN, 0);
         for (int i = 0; i < nitems; i++)
             if ((from == P_DISPLAY && items[i].id == I_PG_DISPLAY) || (from == P_AUDIO && items[i].id == I_PG_AUDIO) ||
                 (from == P_CONTROLS && items[i].id == I_PG_CONTROLS) || (from == P_SYSTEM && items[i].id == I_PG_SYSTEM) ||
-                (from == P_INFO && items[i].id == I_PG_INFO)) cursor = i;
+                (from == P_INFO && items[i].id == I_PG_INFO) || (from == P_POWER && items[i].id == I_PG_POWER) ||
+                (from == P_LIBRARY && items[i].id == I_LIBRARY)) cursor = i;
     }
     }
+    return 0;
 }
 
 static void menu_run(void) {
@@ -1138,20 +1369,41 @@ static void menu_run(void) {
     ctrl_bits(C_PAUSE | C_OSD | C_DIM, 1);
     osd_invalidate();
     wait_release();
-    go(P_MAIN, 0);
-    int quit = !game.loaded ? 0 : 0;
+    lcd_dimmed = 0;
+    apply_settings();
+    focus = 0;
+    cat = 0;
+    go_home(0);
+    int quit = 0;
     uint32_t refresh = ms_now();
     while (!quit) {
         draw_menu();
-        uint32_t k = poll_keys(page == P_INFO || page == P_MAIN ? 1000 : 5000);
+        uint32_t k = poll_keys(page == P_INFO || page == P_GAME || page == P_MAIN ? 1000 : 5000);
         uint32_t now = ms_now();
         if (sleep_after_ms() && (now - last_input_ms) > sleep_after_ms()) { do_sleep(); osd_invalidate(); }
         if (!k) {
-            if (now - refresh > 900 && (page == P_INFO || page == P_MAIN)) { build_page(); refresh = now; }
+            if (now - refresh > 900 && (page == P_INFO || page == P_GAME || page == P_MAIN)) { build_page(); refresh = now; }
             continue;
         }
         if ((k & (K_START | K_S1 | K_UMENU)) && game.loaded) break;
         if (k & K_S2 || k & K_URESET) { reset_game(); break; }
+
+        if (two_level() && focus == 0) {
+            // category level: Ozone moves up / down, XMB left / right
+            int prev = (set.theme == TH_OZONE) ? K_UP : K_LEFT;
+            int next = (set.theme == TH_OZONE) ? K_DOWN : K_RIGHT;
+            int enter = K_A | K_X | ((set.theme == TH_OZONE) ? K_RIGHT : K_DOWN);
+            if (k & prev) { cat = cat ? cat - 1 : ncats - 1; go(cats[cat].page, 0); }
+            if (k & next) { cat = (cat + 1) % ncats; go(cats[cat].page, 0); }
+            if ((k & enter) && nitems) {
+                focus = 1;
+                // one-action categories run directly on A
+                if ((k & (K_A | K_X)) && nitems == 1 && items[0].id != I_OPT) quit = activate(&items[0], 1);
+            }
+            if (k & (K_B | K_Y)) { if (game.loaded) break; }
+            continue;
+        }
+
         if (k & K_UP) {
             int c = cursor;
             do c = c ? c - 1 : nitems - 1; while (!selectable(c) && c != cursor);
@@ -1162,17 +1414,15 @@ static void menu_run(void) {
             do c = (c + 1) % (nitems ? nitems : 1); while (!selectable(c) && c != cursor);
             cursor = c;
         }
-        if ((k & (K_L)) && nitems) { cursor -= LIST_N; if (cursor < 0) cursor = 0; }
-        if ((k & (K_R)) && nitems) { cursor += LIST_N; if (cursor >= nitems) cursor = nitems - 1; }
+        if ((k & K_L) && nitems) { cursor -= 14; if (cursor < 0) cursor = 0; }
+        if ((k & K_R) && nitems) { cursor += 14; if (cursor >= nitems) cursor = nitems - 1; }
         if (nitems && cursor < nitems) {
             item_t *it = &items[cursor];
             if ((k & (K_LEFT | K_RIGHT)) && it->id == I_OPT) activate(it, (k & K_LEFT) ? -1 : 1);
+            else if ((k & K_LEFT) && set.theme == TH_OZONE && page == cats[cat].page) focus = 0;
             else if (k & (K_A | K_X)) quit = activate(it, 1);
         }
-        if (k & (K_B | K_Y)) {
-            if (page == P_MAIN) { if (game.loaded) break; }
-            else back();
-        }
+        if (!quit && (k & (K_B | K_Y))) quit = back();
     }
     settings_save();
     draw_menu();
@@ -1237,10 +1487,15 @@ int main(void) {
     set_defaults();
     if (set_addr) {
         settings_t t;
+        settings_v2_t o;
         flash_read(set_addr, &t, sizeof t);
-        if (t.sum == sum32(&t, sizeof t - 4)) {
-            if (t.magic == SET_MAGIC) set = t;
-            else if (t.magic == SET_MAGIC_V1) { set = t; set.magic = SET_MAGIC; set.spk_boost = 2; }
+        flash_read(set_addr, &o, sizeof o);
+        if (t.magic == SET_MAGIC && t.sum == sum32(&t, sizeof t - 4)) set = t;
+        else if (o.magic == SET_MAGIC_V2 && o.sum == sum32(&o, sizeof o - 4)) {
+            memcpy(&set.disp_mode, o.b, 20);               // fields up to spk_boost
+            strncpy(set.last_path, o.last_path, sizeof set.last_path - 1);
+            set.spk_mode = o.spk_mode;
+            if (o.power_mode) { set.sdram_pd = 1; set.lcd_slow = 1; set.dim_idx = 2; set.poll_slow = 1; set.hdmi_off = 1; }
         }
         set_stored = set;
     }
@@ -1254,7 +1509,7 @@ int main(void) {
     osd_invalidate();
 
     int started = 0;
-    logf("start-up: menu %d, last src %d idx %d, power %d\n", set.boot_menu, set.last_src, set.last_flash, set.power_mode);
+    logf("start-up: menu %d, last src %d idx %d, theme %d\n", set.boot_menu, set.last_src, set.last_flash, set.theme);
     if (!set.boot_menu) {
         if (set.last_src == 2 && sd_mounted && set.last_path[0]) started = load_game(2, 0, set.last_path) == 0;
         if (!started && set.last_src == 3 && cart_valid) started = load_game(3, 0, 0) == 0;
@@ -1272,7 +1527,7 @@ int main(void) {
     last_input_ms = ms_now();
     held = REG_IN & 0xFFFF;
     for (;;) {
-        REG_WAIT = (held & (K_S1 | K_S2)) ? 50 : battery() ? 500 : 200;
+        REG_WAIT = (held & (K_S1 | K_S2)) ? 50 : set.poll_slow ? 500 : 200;
         (void)REG_WAIT;
         uint32_t in = REG_IN & 0xFFFF;
         uint32_t now = ms_now();
@@ -1285,8 +1540,7 @@ int main(void) {
         if (press & K_S1) { s1_down = now; s1_long = 0; }
         if ((in & K_S1) && !s1_long && now - s1_down >= 1000) {
             s1_long = 1;
-            if (battery()) { set.power_mode = 0; set.hdmi_off = 0; }   // back to a picture
-            else set.hdmi_off ^= 1;
+            set.hdmi_off ^= 1;
             apply_settings();
             settings_save();
             toast(set.hdmi_off ? "HDMI off" : "HDMI on", G_DISPLAY, CL_BLUE);
@@ -1295,12 +1549,11 @@ int main(void) {
         if (press & K_S2) { s2_down = now; s2_long = 0; }
         if ((in & K_S2) && !s2_long && now - s2_down >= 1000) {
             s2_long = 1;
-            set.power_mode ^= 1;
-            lcd_dimmed = 0;
-            apply_settings();
+            int to_batt = preset_now() != 1;
+            preset_apply(to_batt);
             settings_save();
-            logf("power mode: %s\n", battery() ? "battery" : "normal");
-            if (!battery()) toast("Normal power", G_POWER, CL_GREEN);
+            logf("power preset: %s\n", to_batt ? "battery" : "normal");
+            if (!to_batt) toast("Normal power", G_POWER, CL_GB3);
         }
         int open = ((rel & K_S1) && !s1_long && now - s1_down >= 20) || (press & K_UMENU) ||
                    ((in & K_SEL) && (in & K_START) && (press & (K_SEL | K_START)));
@@ -1314,7 +1567,7 @@ int main(void) {
             continue;
         }
         if (set.autosave && game.save_pending && now - game.dirty_ms > 2000) {
-            if (save_write() == 0 && set.toasts) toast("Saved", G_CHECK, CL_GREEN);
+            if (save_write() == 0 && set.toasts) toast("Saved", G_CHECK, CL_GB3);
         }
         if (toast_until && (int32_t)(now - toast_until) > 0) {
             toast_until = 0;
@@ -1322,8 +1575,8 @@ int main(void) {
         }
         if (set.dbg_on && now - dbg_ms >= 250) { dbg_ms = now; dbg_update(st); }
         if (sleep_after_ms() && now - last_input_ms > sleep_after_ms()) do_sleep();
-        // battery mode: dim the LCD after 30 s without input, any button brings it back
-        int dim = battery() && now - last_input_ms > 30000;
+        // LCD auto-dim after a while without input, any button brings it back
+        int dim = set.dim_idx && now - last_input_ms > dim_seconds[set.dim_idx & 3] * 1000u;
         if (dim != lcd_dimmed) { lcd_dimmed = dim; apply_settings(); }
     }
 }

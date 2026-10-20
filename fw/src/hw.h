@@ -23,6 +23,7 @@
 #define REG_CFG     IO(0x3C)
 #define IOCTL_ADDR  IO(0x40)
 #define IOCTL_DATA  IO(0x44)
+#define REG_DEEPWAIT IO(0x48)  // like REG_WAIT, and the SDRAM self-refreshes meanwhile (core paused)
 
 #define OSD_RAM     ((volatile uint16_t *)0x03000000u)
 #define LCD_TXT     ((volatile uint16_t *)0x03100000u)   // {attr, char}
@@ -56,6 +57,8 @@
 #define C_HDMI_OFF  (1u << 7)
 #define C_LCD_OFF   (1u << 8)
 #define C_LED       (1u << 9)
+#define C_SDRAM_PD  (1u << 10)  // SDRAM power-down between accesses
+#define C_LCD_SLOW  (1u << 11)  // LCD ~30 fps
 
 // SDRAM layout (byte addresses, the CPU sees SDRAM at 0)
 #define ROM_BASE    0x000000u

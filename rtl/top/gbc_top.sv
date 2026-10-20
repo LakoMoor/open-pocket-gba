@@ -191,7 +191,8 @@ iosys #(.CLK_HZ(33_750_000)) u_io (
     .ctrl(ctrl), .cfg(cfg),
     .ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
     .osd_we(osd_we), .osd_addr(osd_waddr), .osd_data(osd_wdata),
-    .txt_we(txt_we), .txt_addr(txt_waddr), .txt_data(txt_wdata)
+    .txt_we(txt_we), .txt_addr(txt_waddr), .txt_data(txt_wdata),
+    .sdram_sleep(sdram_sleep)
 );
 assign sd_dat1 = 1'b1;
 assign sd_dat2 = 1'b1;
@@ -199,7 +200,7 @@ assign ws2812  = 1'b0;
 
 // ctrl: [0] core reset  [1] pause  [2] ROM download  [4:3] system (auto/GBC/DMG)
 //       [5] OSD on  [6] OSD dims the game (menu; game buttons off)  [7] HDMI off
-//       [8] SPI LCD off  [9] LEDs on
+//       [8] SPI LCD off  [9] LEDs on  [10] SDRAM power-down  [11] LCD half rate
 wire       core_rst   = ctrl[0];
 wire       core_pause = ctrl[1];
 wire       loading    = ctrl[2];
@@ -209,9 +210,12 @@ wire       menu_dim   = ctrl[6];
 assign     hdmi_off   = ctrl[7];
 wire       lcd_off    = ctrl[8];
 wire       led_en     = ctrl[9];
+wire       sdram_pd   = ctrl[10];     // battery mode: SDRAM power-down between accesses
+wire       lcd_slow   = ctrl[11];     // battery mode: LCD at ~30 fps
+wire       sdram_sleep;
 // cfg: [1:0] display mode  [4:2] DMG palette  [5] raw GBC colours  [6] LCD crop
 //      [7] debug lines  [11:8] LCD backlight (0..15)  [14:12] volume (0..4)  [15] swap A/B
-//      [16] speaker on  [18:17] speaker boost (x1, x2, x4, x8)
+//      [16] speaker on  [18:17] speaker boost (x1, x2, x4, x8)  [19] speaker sigma-delta (0: PWM)
 wire [1:0] disp_mode = cfg[1:0];
 wire [2:0] dmg_pal   = cfg[4:2];
 wire       gbc_raw   = cfg[5];
@@ -222,6 +226,7 @@ wire [2:0] volume    = cfg[14:12];
 wire       swap_ab   = cfg[15];
 wire       spk_en    = cfg[16];
 wire [1:0] spk_boost = cfg[18:17];
+wire       spk_pdm   = cfg[19];
 
 wire [11:0] game_btn0 = menu_dim ? 12'd0 : pad_arm;
 // swap A/B: {.. X A ..} bits 9/8 and {Y B} bits 1/0
@@ -344,7 +349,7 @@ sdram_ctrl u_sdram (
     .cart_rd_strobe(sdram_rd & ~gb_reset), .cart_wr_strobe(cram_wr & ~gb_reset),
     .cart_addr(is_cram_addr ? (CRAM_BASE | {6'd0, cram_addr}) : mbc_addr),
     .cart_din(cart_di), .cart_dout(sdram_cart_dout),
-    .lp_block(gb_running & ~sdram_rd),
+    .lp_block(gb_running & ~sdram_rd), .pd_en(sdram_pd), .sr_req(sdram_sleep & ~gb_running),
     .lp_req(lp_req), .lp_ack(lp_ack), .lp_we(lp_we), .lp_addr(lp_addr),
     .lp_wdata(lp_wdata), .lp_be(lp_be), .lp_rdata(lp_rdata), .lp_rvalid(lp_rvalid),
     .O_sdram_clk(O_sdram_clk), .O_sdram_cke(O_sdram_cke), .O_sdram_cs_n(O_sdram_cs_n),
@@ -383,7 +388,7 @@ wire lcd_bl_core;
 lcd_st7735 #(.CLK_HZ(33_750_000)) u_lcd (
     .clk(clk_sys), .reset(sys_rst | lcd_off),
     .px_we(px_we), .px_first(px_first), .px_data(px_data),
-    .isGBC(isGBC), .dmg_pal(dmg_pal), .gbc_raw(gbc_raw), .crop(lcd_crop), .menu_open(menu_open & menu_dim), .dbg_on(dbg_on),
+    .isGBC(isGBC), .dmg_pal(dmg_pal), .gbc_raw(gbc_raw), .crop(lcd_crop), .menu_open(menu_open & menu_dim), .dbg_on(dbg_on), .slow(lcd_slow),
     .txt_addr(lcd_txt_a), .txt_q(lcd_txt_q),
     .lcd_scl(lcd_scl), .lcd_sda(lcd_sda), .lcd_cs(lcd_cs), .lcd_dc(lcd_dc),
     .lcd_rst(lcd_rst), .lcd_bl(lcd_bl_core)
@@ -451,11 +456,17 @@ always @(posedge clk_sys) begin
         spk_s  <= (spk_g > 21'sd65534) ? 16'sh7FFF : (spk_g < -21'sd65534) ? -16'sh7FFF : spk_g[16:1];
     end
 end
+// PWM: 9-bit at 33.75 MHz = 65.9 kHz, slow enough for transistors and magnetic buzzers.
+// Sigma-delta: 1-bit at the full clock, best after an RC filter / amplifier.
 reg [16:0] spk_acc;
+reg  [8:0] spk_pwm;
+reg  [8:0] spk_duty;
 reg        spk_q;
 always @(posedge clk_sys) begin
     spk_acc <= {1'b0, spk_acc[15:0]} + {1'b0, ~spk_s[15], spk_s[14:0]};
-    spk_q   <= spk_en & spk_acc[16];
+    spk_pwm <= spk_pwm + 1'd1;
+    if (spk_pwm == 0) spk_duty <= {~spk_s[15], spk_s[14:7]};
+    spk_q   <= spk_en & (spk_pdm ? spk_acc[16] : (spk_pwm < spk_duty));
 end
 assign spk_p = spk_q;
 assign spk_n = spk_en & ~spk_q;

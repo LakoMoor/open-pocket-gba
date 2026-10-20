@@ -62,6 +62,7 @@ module iosys #(
     output reg        osd_we,
     output reg  [9:0] osd_addr,
     output reg [15:0] osd_data,
+    output            sdram_sleep,  // the CPU sleeps in DEEPWAIT: SDRAM may self-refresh
     output reg        txt_we,
     output reg  [8:0] txt_addr,
     output reg [15:0] txt_data
@@ -196,7 +197,7 @@ always @* begin
             6'h02: mem_rdata = ms;
             6'h03: mem_rdata = {frames, 13'd0, dirty, stat_2x, stat_gbc};
             6'h0C: mem_ready = ~u_busy;
-            6'h0D: begin mem_ready = is_wr | ev | timeout;   mem_rdata = {31'd0, ev}; end
+            6'h0D, 6'h12: begin mem_ready = is_wr | ev | timeout; mem_rdata = {31'd0, ev}; end
             6'h0E: mem_rdata = ctrl;
             6'h0F: mem_rdata = cfg;
             default: ;
@@ -207,6 +208,10 @@ always @* begin
     end else
         mem_ready = mem_valid;                                 // unmapped
 end
+
+// DEEPWAIT (0x48) is WAIT that also lets the SDRAM self-refresh: the CPU is stalled on
+// this register, so it fetches nothing until it wakes up.
+assign sdram_sleep = mem_valid & is_io & ~is_wr & (reg_a == 6'h12) & ~ev & ~timeout;
 
 // ------------------------------------------------------------ register writes and side effects
 always @(posedge clk) begin
@@ -240,7 +245,7 @@ always @(posedge clk) begin
     if (fire && is_io) begin
         if (is_wr) case (reg_a)
             6'h0C: begin u_sh <= {1'b1, mem_wdata[7:0], 1'b0}; u_n <= 4'd10; u_cnt <= UDIV - 1; end
-            6'h0D: begin wait_cnt <= mem_wdata[15:0]; ev <= 0; end
+            6'h0D, 6'h12: begin wait_cnt <= mem_wdata[15:0]; ev <= 0; end
             6'h0E: ctrl <= mem_wdata;
             6'h0F: cfg  <= mem_wdata;
             6'h10: ioctl_addr <= mem_wdata[24:0];
@@ -248,7 +253,7 @@ always @(posedge clk) begin
             default: ;
         endcase else case (reg_a)
             6'h03: dirty <= 0;
-            6'h0D: ev <= 0;
+            6'h0D, 6'h12: ev <= 0;
             default: ;
         endcase
     end

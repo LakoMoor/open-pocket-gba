@@ -10,9 +10,11 @@
 
 // colours (rtl/video/video_out.sv pal16)
 enum {
-    CL_GAME = 0, CL_BLACK, CL_BG, CL_PANEL, CL_LINE, CL_GREY, CL_LIGHT, CL_WHITE,
-    CL_BLUE, CL_GREEN, CL_YELLOW, CL_RED, CL_PURPLE, CL_NAVY, CL_TEAL, CL_SHADE
+    CL_GAME = 0, CL_BLACK, CL_GB0, CL_PANEL, CL_LINE, CL_GREY, CL_LIGHT, CL_WHITE,
+    CL_BLUE, CL_GREEN, CL_YELLOW, CL_RED, CL_GB1, CL_NAVY, CL_GB2, CL_SHADE
 };
+// Game Boy shades: CL_GB0 darkest, CL_GB1 dark, CL_GB2 light, CL_GB3 lightest
+#define CL_GB3 CL_GREEN
 #define AT(fg, bg) ((uint8_t)(((bg) << 4) | (fg)))
 #define EXT 0x80            // repeat top / bottom glyph rows into the cell padding
 

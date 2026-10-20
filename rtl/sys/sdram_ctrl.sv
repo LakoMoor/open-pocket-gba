@@ -14,6 +14,11 @@
 //   2. Refresh and the generic low-priority port. These only start while lp_block is
 //      low; the core drives lp_block in the cycles just before a cart strobe can occur,
 //      so a cart access never has to wait.
+//
+// Power saving:
+//   pd_en   precharge power-down (CKE low) whenever there is nothing to do; leaving it
+//           costs 2 cycles, so a cart read is ready ~8 cycles after its strobe.
+//   sr_req  self refresh while it is high and the controller is idle (sleep mode).
 module sdram_ctrl #(
     parameter RD_CAPTURE = 2,      // cycles from READ command to data capture
     parameter INIT_WAIT  = 7000,   // >200 us at 33.75 MHz
@@ -32,6 +37,8 @@ module sdram_ctrl #(
 
     // low priority port (word access)
     input             lp_block,
+    input             pd_en,
+    input             sr_req,
     input             lp_req,          // hold until lp_ack
     output reg        lp_ack,          // one cycle: request accepted
     input             lp_we,
@@ -98,6 +105,9 @@ reg [20:0] acc_waddr;
 reg [31:0] acc_wdata;
 reg  [3:0] acc_be;
 reg  [1:0] acc_lane;
+reg  [3:0] xp_cnt;         // NOP cycles after CKE goes high again
+reg  [1:0] idle_cnt;       // idle cycles before power-down (lets auto precharge finish)
+reg        in_sr;
 
 // read data capture pipeline: bit0 = cart, bit1 = lp, plus byte lane
 reg [RD_CAPTURE:0] cap_cart, cap_lp;
@@ -124,6 +134,9 @@ always @(posedge clk) begin
         lp_ack       <= 0;
         cap_cart     <= 0;
         cap_lp       <= 0;
+        xp_cnt       <= 0;
+        idle_cnt     <= 0;
+        in_sr        <= 0;
     end else begin
         cmd(CMD_NOP);
         dq_oe  <= 0;
@@ -175,7 +188,21 @@ always @(posedge clk) begin
             acc_ref  <= 0;
             acc_we   <= 0;
             cyc      <= 0;
-            if (cart_rd_pend | (cart_rd_strobe & ~cart_rd_d)) begin
+            if (!O_sdram_cke) begin
+                // in power-down or self refresh: wake up for any work or when released
+                // (self refresh refreshes on its own, so ref_pend only ends a power-down)
+                if (cart_rd_pend | (cart_rd_strobe & ~cart_rd_d) | cart_wr_pend | lp_req |
+                    (in_sr ? ~sr_req : (ref_pend | ~pd_en))) begin
+                    O_sdram_cke <= 1;
+                    xp_cnt      <= in_sr ? 4'd8 : 4'd1;
+                    if (in_sr) ref_pend <= 1;
+                    in_sr       <= 0;
+                end
+                idle_cnt <= 0;
+            end else if (xp_cnt != 0) begin
+                xp_cnt   <= xp_cnt - 1'd1;
+                idle_cnt <= 0;
+            end else if (cart_rd_pend | (cart_rd_strobe & ~cart_rd_d)) begin
                 // read (also covers a strobe arriving this very cycle)
                 logic [22:0] a;
                 a = cart_rd_pend ? cart_rd_addr : cart_addr;
@@ -214,10 +241,19 @@ always @(posedge clk) begin
                 cmd(CMD_ACTIVE);
                 O_sdram_ba   <= lp_addr[20:19];
                 O_sdram_addr <= lp_addr[18:8];
+            end else if (idle_cnt != 2'd3) begin
+                idle_cnt <= idle_cnt + 1'd1;
+            end else if (sr_req && !lp_req) begin
+                cmd(CMD_REFRESH);               // with CKE low: self refresh entry
+                O_sdram_cke <= 0;
+                in_sr       <= 1;
+            end else if (pd_en && !ref_pend) begin
+                O_sdram_cke <= 0;               // precharge power-down
             end
         end
 
         S_ACCESS: begin
+            idle_cnt <= 0;
             cyc <= cyc + 1'd1;
             if (cyc == 3'd1 && !acc_ref) begin
                 // column command with auto precharge

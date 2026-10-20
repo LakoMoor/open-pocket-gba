@@ -267,19 +267,19 @@ localparam [23:0] BORDER = 24'h000000;
 function automatic [23:0] pal16(input [3:0] i);
     case (i)
         4'd1:  pal16 = 24'h000000;
-        4'd2:  pal16 = 24'h121212;
+        4'd2:  pal16 = 24'h0F380F;          // Game Boy darkest
         4'd3:  pal16 = 24'h242424;
         4'd4:  pal16 = 24'h3C3C3C;
         4'd5:  pal16 = 24'h7A7A7A;
         4'd6:  pal16 = 24'hBEBEBE;
         4'd7:  pal16 = 24'hFFFFFF;
         4'd8:  pal16 = 24'h3A6FF0;
-        4'd9:  pal16 = 24'h2ECC71;
+        4'd9:  pal16 = 24'h9BBC0F;          // Game Boy lightest (also 'ok' green)
         4'd10: pal16 = 24'hF5C518;
         4'd11: pal16 = 24'hE5483C;
-        4'd12: pal16 = 24'h9B6BE0;
+        4'd12: pal16 = 24'h306230;          // Game Boy dark
         4'd13: pal16 = 24'h0E1A33;
-        4'd14: pal16 = 24'h20B8A0;
+        4'd14: pal16 = 24'h8BAC0F;          // Game Boy light
         default: pal16 = 24'h000000;
     endcase
 endfunction

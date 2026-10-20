@@ -30,6 +30,7 @@ module lcd_st7735 #(
     input             crop,
     input             menu_open,
     input             dbg_on,        // debug status line in the top text row
+    input             slow,          // battery mode: ~30 fps (16 ms pause between frames)
 
     // menu text RAM read port: 16 x 12 cells {attr, char} at 0, debug line at 384,
     // one cycle latency; char bit 7 repeats the top / bottom glyph row into the padding
@@ -255,7 +256,7 @@ function automatic [9:0] init_rom(input [4:0] i);
 endfunction
 
 localparam M_RST_LO = 3'd0, M_RST_HI = 3'd1, M_INIT = 3'd2, M_DELAY = 3'd3,
-           M_RAMWR = 3'd4, M_FETCH = 3'd5, M_SEND = 3'd6;
+           M_RAMWR = 3'd4, M_FETCH = 3'd5, M_SEND = 3'd6, M_GAP = 3'd7;
 reg  [2:0] m;
 reg  [7:0] wait_ms;
 reg  [4:0] ii;
@@ -310,19 +311,19 @@ wire [15:0] g_eighth = {2'b0, g_in[15:13], 3'b0, g_in[10:8], 2'b0, g_in[4:2]};
 function automatic [15:0] pal565(input [3:0] i);
     case (i)
         4'd1:  pal565 = 16'h0000;
-        4'd2:  pal565 = 16'h1082;
+        4'd2:  pal565 = 16'h09C1;
         4'd3:  pal565 = 16'h2124;
         4'd4:  pal565 = 16'h39E7;
         4'd5:  pal565 = 16'h7BCF;
         4'd6:  pal565 = 16'hBDF7;
         4'd7:  pal565 = 16'hFFFF;
         4'd8:  pal565 = 16'h3B7E;
-        4'd9:  pal565 = 16'h2E6E;
+        4'd9:  pal565 = 16'h9DE1;
         4'd10: pal565 = 16'hF623;
         4'd11: pal565 = 16'hE247;
-        4'd12: pal565 = 16'h9B5C;
+        4'd12: pal565 = 16'h3306;
         4'd13: pal565 = 16'h08C6;
-        4'd14: pal565 = 16'h25D4;
+        4'd14: pal565 = 16'h8D61;
         default: pal565 = 16'h0000;
     endcase
 endfunction
@@ -400,13 +401,18 @@ always @(posedge clk) begin
         M_SEND: if (!tx_busy && !tx_go) begin
             tx_go <= 1; tx_16 <= 1; tx_dc <= 1; tx_data <= pix565;
             p <= p + 1'd1; fcnt <= 0;
-            m <= (p == 14'h3FFF) ? M_RAMWR : M_FETCH;
+            m <= (p == 14'h3FFF) ? (slow ? M_GAP : M_RAMWR) : M_FETCH;
+            if (p == 14'h3FFF) wait_ms <= 8'd16;
             if (p[6:0] == 7'd127) begin                 // next pixel row
                 if (p[13:7] == 7'd3)        begin tvis <= 1; ty <= 0; trow <= 0; end
                 else if (p[13:7] == 7'd123) tvis <= 0;
                 else if (ty == 4'd9)        begin ty <= 0; trow <= trow + 1'd1; end
                 else                        ty <= ty + 1'd1;
             end
+        end
+        M_GAP: if (ms_tick) begin                  // SPI idle between frames
+            if (wait_ms == 0) m <= M_RAMWR;
+            else wait_ms <= wait_ms - 1'd1;
         end
         default: m <= M_RST_LO;
     endcase
