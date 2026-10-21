@@ -929,6 +929,230 @@ static void start_home(void) {
     logf("home screen: %u bytes\n", n);
 }
 
+static void wait_release(void);
+
+// ================================================================ Game Boy Printer
+// The board is the printer on the link port: the Game Boy clocks the bytes, the RTL shifter
+// (REG_PRN) hands each one over and sends the answer that was written two bytes earlier.
+// Packets: 88 33 cmd comp lenL lenH data.. sumL sumH, then the printer answers 81 and its
+// status in the last two bytes. DATA carries 640 bytes (2 tile rows of 20 tiles, RLE when
+// comp = 1); PRINT (palette, margins) prints and empties the buffer.
+extern const uint8_t printer_rom[], printer_rom_end[];
+#define PRN_DATA   TMP_BUF                // tile data received since the last PRINT
+#define PRN_PAGE   TMP_BUF2               // the page: printed parts joined (margins 0)
+#define PRN_MAX    0x18000u
+#define ROW_BYTES  320u                   // 20 tiles x 16 bytes = 8 lines
+
+static struct {
+    int pos, cmd, comp, len, run, lit, printing, polls, packets, pages;
+    uint32_t sum, chk, data_len, page_len, last_ms;
+    uint8_t pdata[4], pal, page_ready;
+} pr;
+
+static void prn_store(uint8_t b) {
+    if (pr.data_len < PRN_MAX) sdram(PRN_DATA)[pr.data_len++] = b;
+}
+
+static void prn_data_byte(uint8_t b) {
+    if (!pr.comp) { prn_store(b); return; }
+    if (pr.run) { while (pr.run) { prn_store(b); pr.run--; } return; }   // the repeated byte
+    if (pr.lit) { prn_store(b); pr.lit--; return; }
+    if (b & 0x80) pr.run = (b & 0x7F) + 2;                              // control byte
+    else pr.lit = b + 1;
+}
+
+static uint8_t prn_status(void) {
+    uint8_t st = 0;
+    switch (pr.cmd) {
+    case 0x01: pr.data_len = 0; pr.printing = 0; break;                  // INIT
+    case 0x04: st = pr.data_len ? 0x08 : 0x00; break;                    // DATA
+    case 0x02: {                                                         // PRINT
+        uint32_t n = pr.data_len - pr.data_len % ROW_BYTES;
+        if (pr.page_len + n > PRN_MAX) n = PRN_MAX - pr.page_len;
+        volatile uint8_t *s = sdram(PRN_DATA), *d = sdram(PRN_PAGE + pr.page_len);
+        for (uint32_t i = 0; i < n; i++) d[i] = s[i];
+        pr.page_len += n;
+        pr.data_len = 0;
+        pr.pal = pr.pdata[2] ? pr.pdata[2] : 0xE4;
+        pr.printing = 1;
+        pr.polls = 0;
+        if (pr.pdata[1] & 0x0F) pr.page_ready = 1;                       // a margin after: the sheet ends
+        st = 0x08;
+        break;
+    }
+    case 0x08: pr.printing = 0; break;                                   // BREAK
+    case 0x0F:                                                           // INQUIRY
+        if (pr.printing) {
+            pr.polls++;
+            st = pr.polls <= 6 ? 0x06 : pr.polls <= 8 ? 0x04 : 0x00;
+            if (!st) pr.printing = 0;
+        } else st = pr.data_len ? 0x08 : 0x00;
+        break;
+    }
+    if ((pr.sum & 0xFFFF) != pr.chk) st |= 0x01;
+    return st;
+}
+
+// one received byte; returns 1 when a packet is complete
+static int prn_byte(uint8_t b) {
+    int i = pr.pos++;
+    switch (i) {
+    case 0: if (b != 0x88) pr.pos = 0; return 0;
+    case 1: if (b != 0x33) pr.pos = b == 0x88; return 0;
+    case 2: pr.cmd = b; pr.sum = b; return 0;
+    case 3: pr.comp = b; pr.sum += b; pr.run = pr.lit = 0; return 0;
+    case 4: pr.len = b; pr.sum += b; return 0;
+    case 5: pr.len |= b << 8; pr.sum += b; if (pr.len > 0x400) pr.pos = 0; return 0;
+    }
+    int k = i - 6;
+    if (k < pr.len) {
+        pr.sum += b;
+        if (pr.cmd == 0x04) prn_data_byte(b);
+        else if (pr.cmd == 0x02 && k < 4) pr.pdata[k] = b;
+        return 0;
+    }
+    k -= pr.len;
+    // the shifter sends what was written two bytes earlier
+    if (k == 0) { pr.chk = b; REG_PRN = 0x81; return 0; }               // -> device ID byte
+    if (k == 1) { pr.chk |= (uint32_t)b << 8; REG_PRN = prn_status(); return 0; }  // -> status byte
+    if (k == 2) { REG_PRN = 0x00; return 0; }                            // -> next packet
+    pr.pos = 0;
+    pr.packets++;
+    return 1;
+}
+
+// the page as a BMP in /Prints; shades by the printer palette
+static void prn_save_bmp(uint32_t rows) {
+    if (!sd_mounted) sd_mount();
+    if (!sd_mounted) return;
+    static const uint8_t shade[4] = { 0xF4, 0xAA, 0x55, 0x10 };
+    char path[40];
+    f_mkdir("/Prints");
+    int i = 0;
+    for (; i < 1000; i++) { sfmt(path, sizeof path, "/Prints/print_%03d.bmp", i); if (f_stat(path, 0) != FR_OK) break; }
+    FIL f;
+    if (i == 1000 || f_open(&f, path, FA_WRITE | FA_CREATE_NEW) != FR_OK) return;
+    uint32_t h = rows * 8, size = 54 + 160 * 3 * h;
+    uint8_t hdr[54] = { 'B', 'M' };
+    hdr[2] = size; hdr[3] = size >> 8; hdr[4] = size >> 16;
+    hdr[10] = 54; hdr[14] = 40; hdr[18] = 160; hdr[22] = h; hdr[23] = h >> 8; hdr[26] = 1; hdr[28] = 24;
+    UINT bw;
+    f_write(&f, hdr, 54, &bw);
+    static uint8_t row[160 * 3];
+    volatile uint8_t *t = sdram(PRN_PAGE);
+    for (int y = (int)h - 1; y >= 0; y--) {
+        for (int x = 0; x < 160; x++) {
+            uint32_t o = (uint32_t)(y / 8) * ROW_BYTES + (x / 8) * 16 + (y % 8) * 2;
+            int c = ((t[o] >> (7 - x % 8)) & 1) | (((t[o + 1] >> (7 - x % 8)) & 1) << 1);
+            uint8_t v = shade[(pr.pal >> (2 * c)) & 3];
+            row[x * 3] = row[x * 3 + 1] = row[x * 3 + 2] = v;
+        }
+        f_write(&f, row, sizeof row, &bw);
+    }
+    f_close(&f);
+    logf("printer: %s, %u lines\n", path, h);
+}
+
+// the viewer ROM with the page shows it on HDMI and the LCD
+static void prn_show_page(void) {
+    uint32_t rows = pr.page_len / ROW_BYTES;
+    pr.page_ready = 0;
+    if (!rows) return;
+    pr.pages++;
+    prn_save_bmp(rows);
+    uint32_t show = rows > 25 ? 25 : rows;
+    uint32_t n = (uint32_t)(printer_rom_end - printer_rom);
+    ctrl = (ctrl | C_CORE_RST | C_DOWNLOAD) & ~C_PAUSE;
+    ctrl_write();
+    volatile uint8_t *rom = sdram(ROM_BASE), *pg = sdram(PRN_PAGE);
+    for (uint32_t i = 0; i < n; i++) rom[i] = printer_rom[i];
+    for (uint32_t i = 0; i < show * ROW_BYTES; i++) rom[0x4000 + i] = pg[i];
+    rom[0x150] = (uint8_t)show;
+    rom[0x151] = pr.pal;
+    rom[0x152] = 1;
+    feed_header(n);
+    ctrl_bits(C_DOWNLOAD, 0);
+    wait_ms(2);
+    ctrl &= ~(C_CORE_RST | C_OSD | C_DIM);      // the picture full screen, the pad to the viewer
+    ctrl_write();
+    pr.page_len = 0;
+}
+
+static void prn_screen(const char *state) {
+    uint8_t bg = CL_SHADE;
+    char b[48];
+    osd_clear(AT(CL_WHITE, bg));
+    osd_put(5, 4, G_DISPLAY, AT(CL_WHITE, bg));
+    osd_text(7, 4, "Game Boy Printer", AT(CL_WHITE, bg));
+    osd_text(7, 6, state, AT(CL_LIGHT, bg));
+    sfmt(b, sizeof b, "%d packets, %u KB, %d printed", pr.packets, (pr.data_len + pr.page_len) >> 10, pr.pages);
+    osd_text(7, 8, b, AT(CL_GREY, bg));
+    osd_text(7, 12, "Link cable from the Game Boy to", AT(CL_GREY, bg));
+    osd_text(7, 13, "pins 41 SC, 42 SI, 56 SO (5 V shifter)", AT(CL_GREY, bg));
+    osd_text(7, 14, "and print from the game.", AT(CL_GREY, bg));
+    osd_text(7, 17, "Prints go to /Prints on the SD card.", AT(CL_GREY, bg));
+    hint(7, 20, "B", "Exit", bg);
+    osd_present();
+    lcd_clear(AT(CL_WHITE, bg));
+    lcd_put(0, 0, G_DISPLAY, AT(CL_WHITE, bg));
+    lcd_text(2, 0, "GB Printer", AT(CL_WHITE, bg));
+    lcd_textn(0, 2, state, 16, AT(CL_LIGHT, bg));
+    sfmt(b, sizeof b, "%d pkt %d prn", pr.packets, pr.pages);
+    lcd_text(0, 4, b, AT(CL_GREY, bg));
+    lcd_text(0, 7, "Link: 41 42 56", AT(CL_GREY, bg));
+    lcd_text(0, 11, "B exit", AT(CL_GREY, bg));
+    lcd_present();
+}
+
+// printer mode until B: the running game or home screen makes room for the viewer
+static void printer_run(void) {
+    if (game.loaded && game.save_pending) save_write();
+    playtime_flush();
+    extra_save();
+    game.loaded = 0;
+    home_running = 0;
+    memset(&pr, 0, sizeof pr);
+    REG_PRN = 0;
+    ctrl = (ctrl | C_PRINTER | C_OSD | C_DIM | C_CORE_RST) & ~C_PAUSE;   // core stopped until a page arrives
+    ctrl_write();
+    osd_invalidate();
+    prn_screen("Waiting for a print");
+    logf("printer: on\n");
+    uint32_t held_k = REG_IN & 0xFFFF, drawn = 0, shown = 0;
+    for (;;) {
+        REG_WAIT = 40;                                // clears the event: check the shifter after it
+        if (!(REG_PRN & 0x100)) (void)REG_WAIT;
+        uint32_t v, now = ms_now();
+        int got = 0;
+        while ((v = REG_PRN) & 0x100) { prn_byte((uint8_t)v); got = 1; }
+        if (got) pr.last_ms = now = ms_now();
+        uint32_t in = REG_IN & 0xFFFF, press = in & ~held_k;
+        held_k = in;
+        if (press & (K_B | K_Y | K_S1 | K_UMENU)) break;
+        int idle = now - pr.last_ms > 60;             // no transfer going on: time for slower work
+        if (!idle) continue;
+        if (pr.page_ready || (pr.page_len && !pr.printing && now - pr.last_ms > 1500)) {
+            prn_screen("Printing");
+            prn_show_page();
+            shown = 1;
+            continue;
+        }
+        if (!shown && now - drawn > 300) {
+            prn_screen(pr.packets ? (pr.printing ? "Printing" : "Receiving") : "Waiting for a print");
+            drawn = now;
+        }
+    }
+    ctrl &= ~C_PRINTER;
+    ctrl_write();
+    REG_PRN = 0;
+    logf("printer: off, %d pages\n", pr.pages);
+    start_home();
+    ctrl |= C_OSD | C_DIM;
+    ctrl_write();
+    osd_invalidate();
+    wait_release();
+}
+
 // src 1: flash index, src 2: SD path, src 3: cartridge
 static int load_game_rom(int src, int idx, const char *path) {
     if (game.loaded && game.save_pending) save_write();
@@ -1118,7 +1342,7 @@ static const uint8_t dim_seconds[4] = { 0, 15, 30, 60 };
 enum {
     P_MAIN, P_LIBRARY, P_BROWSER, P_DISPLAY, P_AUDIO, P_CONTROLS, P_SYSTEM, P_INFO,
     P_CART, P_FILEACT, P_GAME, P_POWER, P_SLEEP, P_CHOICE,
-    P_RECENT, P_CHEATS, P_CHEATACT, P_CODE, P_FLACT, P_UPDATE, P_UPDCONFIRM
+    P_RECENT, P_CHEATS, P_CHEATACT, P_CODE, P_FLACT, P_UPDATE, P_UPDCONFIRM, P_TOOLS
 };
 enum {
     I_NONE, I_RESUME, I_LIBRARY, I_SAVE, I_RESET, I_PG_DISPLAY, I_PG_AUDIO, I_PG_CONTROLS,
@@ -1127,7 +1351,8 @@ enum {
     I_OPT, I_DEFAULTS, I_INFO,
     I_SRC_CART, I_PLAY_CART, I_ERASE_CART, I_PLAY_SD, I_WRITE_CART, I_PG_POWER, I_CHOICE,
     I_PG_RECENT, I_RECENT, I_SHOT, I_PG_CHEATS, I_CHEAT, I_CHEAT_ADD, I_CHEAT_TOGGLE, I_CHEAT_EDIT,
-    I_CHEAT_DEL, I_COPY_FLASH, I_FL_PLAY, I_FL_DEL, I_PG_UPDATE, I_UPD_FW, I_UPD_FPGA, I_UPD_GO
+    I_CHEAT_DEL, I_COPY_FLASH, I_FL_PLAY, I_FL_DEL, I_PG_UPDATE, I_UPD_FW, I_UPD_FPGA, I_UPD_GO,
+    I_PG_TOOLS, I_PRINTER
 };
 
 typedef struct {
@@ -1293,6 +1518,7 @@ static void build_page(void) {
         add(I_PG_CONTROLS, G_PAD, "Controls", "Button layout and shortcuts.");
         add(I_PG_SYSTEM, G_GEAR, "System", "Theme, model, saves, start-up.");
         add(I_PG_POWER, G_POWER, "Power", "Battery preset and every power saving setting.");
+        add(I_PG_TOOLS, G_GEAR, "Tools", "Game Boy Printer and other tools.");
         add(I_PG_INFO, G_INFO, "Info", "Game, storage and system information.");
         add(I_SLEEP_NOW, G_MOON, "Sleep", "Pause and switch off HDMI and the LCD. Press any button to wake up.");
         break;
@@ -1349,6 +1575,13 @@ static void build_page(void) {
     case P_CODE:
         strcpy(page_title, "Game Genie Code");
         break;
+    case P_TOOLS: {
+        strcpy(page_title, "Tools");
+        item_t *it = add(I_PRINTER, G_DISPLAY, "Game Boy Printer", "Be a printer for a real Game Boy on the link port. The running game is closed first.");
+        strcpy(it->value, "link port");
+        add_info("Link pins", "41 SC  42 SI  56 SO");
+        break;
+    }
     case P_FLACT:
         strncpy(page_title, fl_dir[fl_sel].name, sizeof page_title - 1);
         add(I_FL_PLAY, G_PLAY, "Play", "Load the game from the internal flash.");
@@ -1522,7 +1755,7 @@ enum { TH_POCKET, TH_OZONE, TH_XMB, TH_GAMEBOY, TH_IPOD, TH_BIOS, TH_TERM, TH_AO
 static int two_level(void) { return set.theme == TH_OZONE || set.theme == TH_XMB; }
 
 typedef struct { uint8_t icon; const char *name; uint8_t page; } cat_t;
-static cat_t cats[10];
+static cat_t cats[12];
 static int ncats, cat, focus;
 
 static void build_cats(void) {
@@ -1535,6 +1768,7 @@ static void build_cats(void) {
     cats[ncats++] = (cat_t){ G_PAD, "Controls", P_CONTROLS };
     cats[ncats++] = (cat_t){ G_GEAR, "System", P_SYSTEM };
     cats[ncats++] = (cat_t){ G_POWER, "Power", P_POWER };
+    cats[ncats++] = (cat_t){ G_GEAR, "Tools", P_TOOLS };
     cats[ncats++] = (cat_t){ G_INFO, "Info", P_INFO };
     cats[ncats++] = (cat_t){ G_MOON, "Sleep", P_SLEEP };
     if (cat >= ncats) cat = 0;
@@ -2464,6 +2698,12 @@ static int activate(item_t *it, int dir) {
         go(P_FILEACT, 1);
         break;
     case I_PG_RECENT: go(P_RECENT, 0); break;
+    case I_PG_TOOLS: go(P_TOOLS, 0); break;
+    case I_PRINTER:
+        printer_run();
+        build_cats();
+        go(P_TOOLS, 0);
+        break;
     case I_RECENT: {
         recent_t r = ex.rec[it->arg];
         int ok = -1;

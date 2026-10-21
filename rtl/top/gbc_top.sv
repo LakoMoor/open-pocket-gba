@@ -192,6 +192,7 @@ iosys #(.CLK_HZ(33_750_000)) u_io (
     .sd_cs_n(sd_dat3), .sd_clk(sd_clk), .sd_mosi(sd_cmd), .sd_miso(sd_dat0),
     .cart_cs_n(cart_cs_n), .cart_clk(cart_clk), .cart_mosi(cart_mosi), .cart_miso(cart_miso),
     .uart_tx(uart_tx),
+    .link_sc(link_sc), .link_si(link_si), .prn_so(prn_so),
     .inputs({uart_reset, uart_menu, s2_s[1], s1_s[1], pad_arm}),
     .frame_tick(lcd_vs_rise), .stat_gbc(isGBC), .stat_2x(speed), .stat_buf(rd_buf), .cram_wr(cram_wr & ~gb_reset),
     .ctrl(ctrl), .cfg(cfg), .beep(beep),
@@ -208,6 +209,7 @@ assign ws2812  = 1'b0;
 //       [5] OSD on  [6] OSD dims the game (menu; game buttons off)  [7] HDMI off
 //       [8] SPI LCD off  [9] LEDs on  [10] SDRAM power-down  [11] LCD half rate
 //       [12] fast forward  [13] framebuffer writes even with HDMI off (screenshots)  [14] link port on
+//       [15] link port is a Game Boy Printer (the menu CPU answers, the core is disconnected)
 wire       core_rst   = ctrl[0];
 wire       core_pause = ctrl[1];
 wire       loading    = ctrl[2];
@@ -222,6 +224,8 @@ wire       lcd_slow   = ctrl[11];     // battery mode: LCD at ~30 fps
 wire       fast_fwd   = ctrl[12];
 wire       fb_force   = ctrl[13];
 wire       link_en    = ctrl[14];
+wire       prn_mode   = ctrl[15];
+wire       prn_so;
 wire [31:0] beep;
 wire       sdram_sleep;
 // cfg: [1:0] display mode  [4:2] DMG palette  [5] raw GBC colours  [6] LCD crop
@@ -445,10 +449,11 @@ always @(posedge clk_p) txt_q <= txt_ram[txt_raddr];
 wire       ser_int, ser_clk_out, ser_dout;
 reg  [1:0] lk_sc_s = 2'b11, lk_si_s = 2'b11;
 always @(posedge clk_sys) begin lk_sc_s <= {lk_sc_s[0], link_sc}; lk_si_s <= {lk_si_s[0], link_si}; end
-wire       ser_clk_in = link_en ? lk_sc_s[1] : 1'b1;
-wire       ser_din    = link_en ? lk_si_s[1] : 1'b1;
-assign link_sc = (link_en & ser_int) ? ser_clk_out : 1'bz;
-assign link_so = link_en ? ser_dout : 1'b1;
+wire       core_link  = link_en & ~prn_mode;
+wire       ser_clk_in = core_link ? lk_sc_s[1] : 1'b1;
+wire       ser_din    = core_link ? lk_si_s[1] : 1'b1;
+assign link_sc = (core_link & ser_int) ? ser_clk_out : 1'bz;
+assign link_so = prn_mode ? prn_so : core_link ? ser_dout : 1'b1;
 
 // ================================================================ audio
 wire        clk_audio;

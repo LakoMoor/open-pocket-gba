@@ -8,3 +8,7 @@ python gen.py
 "$RGBDS/rgblink.exe" -t -o home.gb -m build/home.map -n build/home.sym build/home.o
 "$RGBDS/rgbfix.exe" -v -c -p 0xFF -t "OPEN POCKET" -m 0 -r 0 home.gb
 echo "home.gb $(wc -c < home.gb) bytes"
+"$RGBDS/rgbasm.exe" -o build/printer.o printer.asm
+"$RGBDS/rgblink.exe" -t -o printer.gb build/printer.o
+"$RGBDS/rgbfix.exe" -v -C -p 0xFF -t "OP PRINTER" -m 0 -r 0 printer.gb
+echo "printer.gb $(wc -c < printer.gb) bytes"

@@ -1,0 +1,59 @@
+Ref,Value,Footprint,Part,Side
+C1,10uF,Capacitor_SMD:C_0805_2012Metric,,back
+C2,10uF,Capacitor_SMD:C_0805_2012Metric,,back
+C3,10uF,Capacitor_SMD:C_0805_2012Metric,,back
+C4,22uF,Capacitor_SMD:C_0805_2012Metric,,back
+C5,22uF,Capacitor_SMD:C_0805_2012Metric,,back
+C10,10nF,Capacitor_SMD:C_0603_1608Metric,,back
+C11,1uF,Capacitor_SMD:C_0603_1608Metric,,back
+C12,1uF,Capacitor_SMD:C_0603_1608Metric,,back
+C13,10uF,Capacitor_SMD:C_0805_2012Metric,,back
+C20,100nF,Capacitor_SMD:C_0603_1608Metric,,back
+D1,SS34,Diode_SMD:D_SMA,,back
+D2,LED charge,LED_SMD:LED_0603_1608Metric,,back
+H1,M2,MountingHole:MountingHole_2.2mm_M2,,front
+H2,M2,MountingHole:MountingHole_2.2mm_M2,,front
+H3,M2,MountingHole:MountingHole_2.2mm_M2,,front
+H4,M2,MountingHole:MountingHole_2.2mm_M2,,front
+J3,LCD 2.4in ILI9341,Connector_PinSocket_2.54mm:PinSocket_1x14_P2.54mm_Vertical,"2.4"" SPI TFT 240x320 module",front
+J4,LCD 1.44in ST7735 (alt.),Connector_PinSocket_2.54mm:PinSocket_1x08_P2.54mm_Vertical,"1.44"" SPI TFT 128x128 module",front
+J5,USB-C (charge),Connector_USB:USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal,GCT USB4105-GF-A,back
+J6,LiPo 3.7 V,Connector_JST:JST_PH_S2B-PH-K_1x02_P2.00mm_Horizontal,603450 1200 mAh with PH2.0 lead,back
+J7,Speaker 8R 1W,Connector_JST:JST_PH_S2B-PH-K_1x02_P2.00mm_Horizontal,20 mm 8 ohm speaker,back
+J8,3.5 mm,Connector_Audio:Jack_3.5mm_CUI_SJ1-3523N_Horizontal,CUI SJ1-3523N,back
+J9,Link port,custom:J9,Game Boy Color link port socket,back
+L1,1uH 4A,Inductor_SMD:L_Bourns_SRN6045TA,,back
+Q1,BSS138,Package_TO_SOT_SMD:SOT-23,,back
+Q2,BSS138,Package_TO_SOT_SMD:SOT-23,,back
+Q3,BSS138,Package_TO_SOT_SMD:SOT-23,,back
+Q4,BSS138,Package_TO_SOT_SMD:SOT-23,,back
+Q5,AO3401,Package_TO_SOT_SMD:SOT-23,,back
+R1,5.1k,Resistor_SMD:R_0603_1608Metric,,back
+R2,5.1k,Resistor_SMD:R_0603_1608Metric,,back
+R3,1k,Resistor_SMD:R_0603_1608Metric,,back
+R10,1k,Resistor_SMD:R_0603_1608Metric,,back
+R11,100k,Resistor_SMD:R_0603_1608Metric,,back
+R12,100R,Resistor_SMD:R_0603_1608Metric,,back
+R20,10k,Resistor_SMD:R_0603_1608Metric,,back
+R21,100k,Resistor_SMD:R_0603_1608Metric,,back
+R30,10k,Resistor_SMD:R_0603_1608Metric,,back
+R31,10k,Resistor_SMD:R_0603_1608Metric,,back
+R32,10k,Resistor_SMD:R_0603_1608Metric,,back
+R33,10k,Resistor_SMD:R_0603_1608Metric,,back
+R34,10k,Resistor_SMD:R_0603_1608Metric,,back
+R35,10k,Resistor_SMD:R_0603_1608Metric,,back
+SW1,Up,Button_Switch_SMD:SW_SPST_PTS645Sx43SMTR92,C&K PTS645SK43SMTR92,front
+SW2,Down,Button_Switch_SMD:SW_SPST_PTS645Sx43SMTR92,C&K PTS645SK43SMTR92,front
+SW3,Left,Button_Switch_SMD:SW_SPST_PTS645Sx43SMTR92,C&K PTS645SK43SMTR92,front
+SW4,Right,Button_Switch_SMD:SW_SPST_PTS645Sx43SMTR92,C&K PTS645SK43SMTR92,front
+SW5,A,Button_Switch_SMD:SW_SPST_PTS645Sx43SMTR92,C&K PTS645SK43SMTR92,front
+SW6,B,Button_Switch_SMD:SW_SPST_PTS645Sx43SMTR92,C&K PTS645SK43SMTR92,front
+SW7,Select,Button_Switch_SMD:SW_SPST_TL3342,TE TL3342,front
+SW8,Start,Button_Switch_SMD:SW_SPST_TL3342,TE TL3342,front
+SW9,Menu,Button_Switch_SMD:SW_SPST_TL3342,TE TL3342,front
+SW10,Power,Button_Switch_SMD:SW_SPDT_Shouhan_MSK12C02,Shouhan MSK12C02,back
+SW11,Wake / boost,Button_Switch_SMD:SW_SPST_TL3342,TE TL3342,back
+U1,Tang Nano 20K,custom:U1,"2x PinSocket 1x20 2.54 mm, low profile",back
+U2,IP5306,Package_SO:SOIC-8-1EP_3.9x4.9mm_P1.27mm_EP2.29x3mm,Injoinic IP5306,back
+U3,PAM8302A,Package_SO:MSOP-8_3x3mm_P0.65mm,Diodes PAM8302AAYCR,back
+U4,W25Q128JV,Package_SO:SOIC-8_5.3x5.3mm_P1.27mm,Winbond W25Q128JVSIQ,back

@@ -46,6 +46,11 @@ module iosys #(
 
     output            uart_tx,
 
+    // link port as a slave (Game Boy Printer): the Game Boy clocks SC, we answer on SO
+    input             link_sc,
+    input             link_si,
+    output            prn_so,
+
     input      [15:0] inputs,       // {uart reset, uart menu, s2, s1, pad[11:0]}
     input             frame_tick,
     input             stat_gbc,
@@ -179,6 +184,16 @@ reg        cram_d;
 reg [15:0] frames;
 wire       timeout = (wait_cnt == 0);
 
+// ------------------------------------------------------------ link slave (printer)
+// SI is sampled on the rising edge of SC, SO changes on the falling edge, MSB first. After
+// 8 bits the byte is ready (register 0x60) and the answer for the next byte is loaded.
+reg  [1:0] lk_sc = 2'b11, lk_si = 2'b11;
+reg  [7:0] prn_rx, prn_tx, prn_sr, prn_byte;
+reg  [2:0] prn_n;
+reg        prn_valid, prn_q = 1'b1;
+reg [15:0] prn_idle;
+assign prn_so = prn_q;
+
 // ------------------------------------------------------------ register read / ready
 always @* begin
     mem_ready = 0;
@@ -202,6 +217,7 @@ always @* begin
             6'h0D, 6'h12: begin mem_ready = is_wr | ev | timeout; mem_rdata = {31'd0, ev}; end
             6'h0E: mem_rdata = ctrl;
             6'h0F: mem_rdata = cfg;
+            6'h18: mem_rdata = {23'd0, prn_valid, prn_byte};
             default: ;
         endcase
         if (sel_sd) begin mem_ready = sd_ready; mem_rdata = sd_rdata; end
@@ -230,6 +246,27 @@ always @(posedge clk) begin
     in_q    <= inputs;
     in_prev <= in_q;
     if (in_q != in_prev) ev <= 1;
+    // link slave
+    lk_sc <= {lk_sc[0], link_sc};
+    lk_si <= {lk_si[0], link_si};
+    if (lk_sc == 2'b10) begin                       // falling edge: next bit out
+        prn_q  <= prn_sr[7];
+        prn_sr <= {prn_sr[6:0], 1'b0};
+        prn_idle <= 0;
+    end else if (lk_sc == 2'b01) begin              // rising edge: bit in
+        prn_rx <= {prn_rx[6:0], lk_si[1]};
+        prn_n  <= prn_n + 1'd1;
+        prn_idle <= 0;
+        if (prn_n == 3'd7) begin
+            prn_byte  <= {prn_rx[6:0], lk_si[1]};
+            prn_valid <= 1;
+            prn_sr    <= prn_tx;
+            ev        <= 1;
+        end
+    end else if (prn_idle != 16'hFFFF) begin
+        prn_idle <= prn_idle + 1'd1;
+        if (prn_idle == 16'd40000) prn_n <= 0;      // ~1.2 ms without a clock: resynchronise
+    end
     cram_d <= cram_wr;
     if (cram_wr & ~cram_d) dirty <= 1;
     if (frame_tick) frames <= frames + 1'd1;
@@ -253,9 +290,11 @@ always @(posedge clk) begin
             6'h10: ioctl_addr <= mem_wdata[24:0];
             6'h11: begin ioctl_dout <= mem_wdata[15:0]; ioctl_wr <= 1; end
             6'h13: beep <= mem_wdata;
+            6'h18: prn_tx <= mem_wdata[7:0];
             default: ;
         endcase else case (reg_a)
             6'h03: dirty <= 0;
+            6'h18: prn_valid <= 0;
             6'h0D, 6'h12: ev <= 0;
             default: ;
         endcase

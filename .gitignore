@@ -25,3 +25,8 @@ sim/*
 !sim/build_iosys_tb.sh
 fw/boot/*.bin
 fw/boot/*.elf
+
+# KiCad backups and local files
+hardware/pcb/*-backups/
+hardware/pcb/*.kicad_prl
+hardware/pcb/fp-info-cache

@@ -24,6 +24,7 @@
 #define IOCTL_ADDR  IO(0x40)
 #define IOCTL_DATA  IO(0x44)
 #define REG_DEEPWAIT IO(0x48)  // like REG_WAIT, and the SDRAM self-refreshes meanwhile (core paused)
+#define REG_PRN     IO(0x60)   // printer: read [8] byte ready [7:0] byte (clears); write: answer two bytes on
 #define REG_BEEP    IO(0x4C)   // menu sound: [11:0] half period in 4 us steps, [27:16] ms; a change starts it
 
 #define OSD_RAM     ((volatile uint16_t *)0x03000000u)
@@ -63,6 +64,7 @@
 #define C_FAST      (1u << 12)  // fast forward (core at double speed)
 #define C_FB_FORCE  (1u << 13)  // framebuffer writes with HDMI off (screenshots)
 #define C_LINK      (1u << 14)  // link port pins active
+#define C_PRINTER   (1u << 15)  // link port is a Game Boy Printer (REG_PRN), the core is cut off
 
 // SDRAM layout (byte addresses, the CPU sees SDRAM at 0)
 #define ROM_BASE    0x000000u
