@@ -11,11 +11,12 @@
 #include "osd.h"
 #include "ff.h"
 
-#define FW_VERSION      "1.0"
+#define FW_VERSION      "1.1"
 #define GAMES_BASE      0x200000u
 #define SAVE_BASE       0x600000u       // 15 slots of 0x22000: header sector + up to 128 KB
 #define SAVE_SLOT       0x22000u
-#define SET_MAGIC       0x3353504Fu     // "OPS3"
+#define SET_MAGIC       0x3453504Fu     // "OPS4"
+#define SET_MAGIC_V3    0x3353504Fu     // "OPS3": settings_v3_t, converted on load
 #define SET_MAGIC_V2    0x3253504Fu     // "OPS2": older layout, converted on load
 #define CART_MAGIC      0x3143504Fu     // "OPC1"
 #define CART_ROM        0x10000u        // ROM offset in the cartridge flash
@@ -29,10 +30,18 @@ typedef struct {
     uint8_t  autosave, toasts, boot_menu, sleep_min;
     uint8_t  last_src, last_flash, speaker, spk_boost;
     uint8_t  spk_mode, theme, sdram_pd, lcd_slow;      // theme: TH_*
-    uint8_t  dim_idx, poll_slow, rsv[2];               // LCD auto-dim: off / 15 / 30 / 60 s
+    uint8_t  dim_idx, poll_slow, menu_snd, link_en;    // LCD auto-dim: off / 15 / 30 / 60 s
     char     last_path[216];
+    uint8_t  home_scene, rsv2[15];
     uint32_t sum;
 } settings_t;
+
+typedef struct {                                       // "OPS3" layout: settings_t without the tail
+    uint32_t magic;
+    uint8_t  b[28];
+    char     last_path[216];
+    uint32_t sum;
+} settings_v3_t;
 
 typedef struct {                                       // "OPS2" layout
     uint32_t magic;
@@ -64,6 +73,7 @@ static void set_defaults(void) {
     set.toasts = 1;
     set.spk_boost = 2;      // x4
     set.theme = 1;          // Ozone
+    set.menu_snd = 1;
 }
 
 static void settings_save(void) {
@@ -98,10 +108,10 @@ static void apply_settings(void) {
               (duty << 8) | ((uint32_t)(set.volume & 7) << 12) |
               ((uint32_t)(set.swap_ab & 1) << 15) | ((uint32_t)(set.speaker & 1) << 16) |
               ((uint32_t)(set.spk_boost & 3) << 17) | ((uint32_t)(set.spk_mode & 1) << 19);
-    ctrl &= ~((3u << C_SYS_SHIFT) | C_HDMI_OFF | C_LCD_OFF | C_LED | C_SDRAM_PD | C_LCD_SLOW);
+    ctrl &= ~((3u << C_SYS_SHIFT) | C_HDMI_OFF | C_LCD_OFF | C_LED | C_SDRAM_PD | C_LCD_SLOW | C_LINK);
     ctrl |= ((uint32_t)set.sys_mode << C_SYS_SHIFT) | (set.hdmi_off ? C_HDMI_OFF : 0) |
             (set.lcd_off ? C_LCD_OFF : 0) | (set.led_en ? C_LED : 0) |
-            (set.sdram_pd ? C_SDRAM_PD : 0) | (set.lcd_slow ? C_LCD_SLOW : 0);
+            (set.sdram_pd ? C_SDRAM_PD : 0) | (set.lcd_slow ? C_LCD_SLOW : 0) | (set.link_en ? C_LINK : 0);
     ctrl_write();
 }
 
@@ -429,6 +439,476 @@ static int cart_write_rom(void) {
     return 0;
 }
 
+// ================================================================ menu sounds
+static uint32_t beep_tog;
+// half period in 4 us steps, length in ms; the toggle bit makes equal beeps retrigger
+static void beep(int hp, int ms) {
+    if (!set.menu_snd) return;
+    beep_tog ^= 1u << 31;
+    REG_BEEP = beep_tog | ((uint32_t)ms << 16) | (uint32_t)hp;
+}
+static void snd_move(void) { beep(55, 4); }
+static void snd_ok(void)   { beep(80, 22); }
+static void snd_back(void) { beep(130, 22); }
+
+// ================================================================ extras: recent games, play time, cheats
+// One flash sector after the save slots holds the recent games and the Game Genie codes.
+#define EXTRA_ADDR   0x7FE000u
+#define EXTRA_MAGIC  0x31585045u        // "EPX1"
+#define N_RECENT     8
+#define N_CHEATGAME  26
+#define N_CODES      8
+typedef struct { uint8_t src, idx, rsv[2]; uint32_t secs; char name[24]; char path[160]; } recent_t;
+typedef struct { uint32_t key; uint8_t on, n, rsv[2]; char code[N_CODES][10]; } cheatset_t;
+typedef struct { uint32_t magic; recent_t rec[N_RECENT]; cheatset_t ch[N_CHEATGAME]; uint32_t sum; } extra_t;
+static extra_t  ex;
+static int      ex_dirty;
+static uint32_t play_ms;                // play time of the running game not yet added to its entry
+
+static void extra_load(void) {
+    if (set_addr) flash_read(EXTRA_ADDR, &ex, sizeof ex);
+    if (!set_addr || ex.magic != EXTRA_MAGIC || ex.sum != sum32(&ex, sizeof ex - 4)) {
+        memset(&ex, 0, sizeof ex);
+        ex.magic = EXTRA_MAGIC;
+    }
+}
+static void extra_save(void) {
+    if (!set_addr || !ex_dirty) return;
+    ex.sum = sum32(&ex, sizeof ex - 4);
+    flash_write(EXTRA_ADDR, &ex, sizeof ex);
+    ex_dirty = 0;
+}
+static int recent_count(void) {
+    int n = 0;
+    while (n < N_RECENT && ex.rec[n].src) n++;
+    return n;
+}
+// the running game is entry 0
+static void playtime_flush(void) {
+    if (play_ms >= 1000 && ex.rec[0].src) {
+        ex.rec[0].secs += play_ms / 1000;
+        play_ms %= 1000;
+        ex_dirty = 1;
+    }
+}
+static int recent_same(const recent_t *r, int src, int idx, const char *path) {
+    if (r->src != src) return 0;
+    if (src == 2) return !strcmp(r->path, path);
+    if (src == 1) return r->idx == idx;
+    return 1;
+}
+static void recent_add(int src, int idx, const char *path, const char *name) {
+    if (src == 2 && strlen(path) >= sizeof ex.rec[0].path) return;
+    int i = 0;
+    while (i < N_RECENT - 1 && ex.rec[i].src && !recent_same(&ex.rec[i], src, idx, path)) i++;
+    recent_t e = ex.rec[i];
+    if (!recent_same(&e, src, idx, path)) memset(&e, 0, sizeof e);
+    memmove(&ex.rec[1], &ex.rec[0], i * sizeof(recent_t));
+    e.src = (uint8_t)src;
+    e.idx = (uint8_t)idx;
+    strncpy(e.name, name, sizeof e.name - 1);
+    e.name[sizeof e.name - 1] = 0;
+    if (src == 2) strcpy(e.path, path);
+    ex.rec[0] = e;
+    play_ms = 0;
+    ex_dirty = 1;
+}
+static void fmt_playtime(char *b, int n, uint32_t s) {
+    if (s >= 3600) sfmt(b, n, "%uh %02um", s / 3600, s / 60 % 60);
+    else if (s >= 60) sfmt(b, n, "%um", s / 60);
+    else sfmt(b, n, "%us", s);
+}
+
+// ---- Game Genie: ABC-DEF-GHI patches the ROM in SDRAM. AB = data, address = FCDE ^ F000,
+// GI = compare value rotated right by 2 and XORed with BA (6-digit codes have no compare).
+static uint32_t game_key(void) {
+    volatile uint8_t *rom = sdram(ROM_BASE);
+    uint32_t h = 0x811C9DC5u;
+    for (int i = 0x134; i < 0x150; i++) h = (h ^ rom[i]) * 16777619u;
+    return h ? h : 1;
+}
+static cheatset_t *cheats_for(int create) {
+    uint32_t k = game_key();
+    for (int i = 0; i < N_CHEATGAME; i++) if (ex.ch[i].key == k) return &ex.ch[i];
+    if (!create) return 0;
+    int i = 0;
+    while (i < N_CHEATGAME && ex.ch[i].key) i++;
+    if (i == N_CHEATGAME) {                     // full: drop the oldest
+        memmove(&ex.ch[0], &ex.ch[1], (N_CHEATGAME - 1) * sizeof(cheatset_t));
+        i = N_CHEATGAME - 1;
+    }
+    memset(&ex.ch[i], 0, sizeof ex.ch[i]);
+    ex.ch[i].key = k;
+    ex_dirty = 1;
+    return &ex.ch[i];
+}
+static int hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+// code: 6 or 9 hex digits, no dashes
+static int gg_decode(const char *c, uint16_t *addr, uint8_t *val, int *cmp) {
+    int d[9], n = 0;
+    for (; c[n] && c[n] != ' ' && n < 9; n++) if ((d[n] = hexval(c[n])) < 0) return 0;
+    if (n != 6 && n != 9) return 0;
+    *val  = (uint8_t)(d[0] << 4 | d[1]);
+    *addr = (uint16_t)(((d[5] ^ 0xF) << 12) | (d[2] << 8) | (d[3] << 4) | d[4]);
+    if (n == 9) {
+        uint8_t x = (uint8_t)(d[6] << 4 | d[8]);
+        x = (uint8_t)((x >> 2) | (x << 6));
+        *cmp = x ^ 0xBA;
+    } else *cmp = -1;
+    return 1;
+}
+static void gg_format(char *b, const char *c) {   // "ABCDEFGHI" -> "ABC-DEF-GHI"
+    int n = 0, o = 0;
+    for (; c[n] && c[n] != ' ' && n < 9; n++) {
+        if (n == 3 || n == 6) b[o++] = '-';
+        b[o++] = c[n];
+    }
+    b[o] = 0;
+}
+
+typedef struct { uint32_t a; uint8_t old; } patch_t;
+#define MAX_PATCH 512
+static patch_t patches[MAX_PATCH];
+static int     npatch;
+
+static void cheats_unapply(void) {
+    volatile uint8_t *rom = sdram(ROM_BASE);
+    while (npatch) { npatch--; rom[patches[npatch].a] = patches[npatch].old; }
+}
+static int cheats_apply(void) {
+    cheats_unapply();
+    if (!game.loaded) return 0;
+    cheatset_t *cs = cheats_for(0);
+    if (!cs) return 0;
+    volatile uint8_t *rom = sdram(ROM_BASE);
+    for (int i = 0; i < cs->n; i++) {
+        if (!(cs->on & (1 << i))) continue;
+        uint16_t a; uint8_t v; int cmp;
+        if (!gg_decode(cs->code[i], &a, &v, &cmp) || a >= 0x8000) continue;
+        uint32_t banks = game.rom_bytes / 0x4000;
+        // 0000-3FFF is bank 0; 4000-7FFF can hold any other bank, so patch them all
+        for (uint32_t b = (a < 0x4000 ? 0 : 1); b < (a < 0x4000 ? 1 : banks); b++) {
+            uint32_t off = a < 0x4000 ? a : b * 0x4000 + (a - 0x4000);
+            if (off >= game.rom_bytes) break;
+            if (cmp >= 0 && rom[off] != cmp) continue;
+            if (npatch >= MAX_PATCH) break;
+            patches[npatch].a = off;
+            patches[npatch].old = rom[off];
+            npatch++;
+            rom[off] = v;
+        }
+    }
+    return npatch;
+}
+
+// ================================================================ screenshots
+static const uint32_t dmg_pals[5][4] = {
+    { 0xF8F8F8, 0xA8A8A8, 0x585858, 0x101010 }, { 0x9BBC0F, 0x8BAC0F, 0x306230, 0x0F380F },
+    { 0xC4CFA1, 0x8B956D, 0x4D533C, 0x1F1F1F }, { 0x00B581, 0x009A71, 0x00694A, 0x004F3B },
+    { 0xFFC060, 0xC88830, 0x784818, 0x301808 },
+};
+#define FB_BASE  0x700000u
+#define TMP_BUF  0x740000u              // free SDRAM between the framebuffers and the firmware
+#define TMP_BUF2 0x760000u
+
+static uint32_t pix_rgb(uint16_t p, int gbc) {
+    if (!gbc) return dmg_pals[set.dmg_pal % 5][p & 3];
+    uint32_t r5 = p & 31, g5 = (p >> 5) & 31, b5 = (p >> 10) & 31;
+    if (set.gbc_raw) return (r5 << 19 | (r5 >> 2) << 16) | (g5 << 11 | (g5 >> 2) << 8) | (b5 << 3 | b5 >> 2);
+    uint32_t r = (r5 * 26 + g5 * 4 + b5 * 2) >> 2, g = (g5 * 24 + b5 * 8) >> 2, b = (r5 * 6 + g5 * 4 + b5 * 22) >> 2;
+    return r << 16 | g << 8 | b;
+}
+
+// the newest complete frame to /Screenshots/<game>_NNN.bmp; returns 0 when saved
+static int screenshot(char *saved_as, int n) {
+    if (!sd_mounted) sd_mount();
+    if (!sd_mounted || !game.loaded) return -1;
+    if (set.hdmi_off) {                 // no framebuffer writes while HDMI is off: run 3 frames with them
+        uint32_t keep = ctrl;
+        ctrl = (ctrl | C_FB_FORCE) & ~C_PAUSE;
+        ctrl_write();
+        uint16_t f0 = (uint16_t)(REG_STAT >> 16);
+        uint32_t t0 = ms_now();
+        while ((uint16_t)((REG_STAT >> 16) - f0) < 3 && ms_now() - t0 < 300) ;
+        ctrl = keep | C_FB_FORCE;
+        ctrl_write();
+        wait_ms(20);
+        ctrl = keep;
+        ctrl_write();
+    }
+    uint32_t st = REG_STAT;
+    int gbc = st & 1, buf = (st >> 3) & 3;
+    char nm[28], path[80];
+    int k = 0;
+    for (const char *s = game.name; *s && k < 24; s++)
+        nm[k++] = ((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9') || *s == '-') ? *s : '_';
+    nm[k] = 0;
+    if (!k) strcpy(nm, "game");
+    f_mkdir("/Screenshots");
+    int i = 0;
+    for (; i < 1000; i++) {
+        sfmt(path, sizeof path, "/Screenshots/%s_%03d.bmp", nm, i);
+        if (f_stat(path, 0) != FR_OK) break;
+    }
+    FIL f;
+    if (i == 1000 || f_open(&f, path, FA_WRITE | FA_CREATE_NEW) != FR_OK) return -1;
+    static uint8_t row[160 * 3];
+    static const uint8_t hdr[54] = {
+        'B', 'M', 0x36, 0x0E, 0x01, 0, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0,
+        160, 0, 0, 0, 144, 0, 0, 0, 1, 0, 24, 0, 0, 0, 0, 0, 0, 0x8C, 0x01, 0,
+        0x13, 0x0B, 0, 0, 0x13, 0x0B, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    UINT bw;
+    int ok = f_write(&f, hdr, sizeof hdr, &bw) == FR_OK;
+    volatile uint32_t *fb = (volatile uint32_t *)sdram(FB_BASE + (uint32_t)buf * 0x10000);
+    for (int y = 143; y >= 0 && ok; y--) {
+        for (int x = 0; x < 160; x++) {
+            uint32_t idx = (uint32_t)y * 160 + x, w = fb[idx >> 1];
+            uint32_t c = pix_rgb((idx & 1) ? (w >> 16) & 0x7FFF : w & 0x7FFF, gbc);
+            row[x * 3] = c; row[x * 3 + 1] = c >> 8; row[x * 3 + 2] = c >> 16;
+        }
+        ok = f_write(&f, row, sizeof row, &bw) == FR_OK;
+    }
+    f_close(&f);
+    if (!ok) return -1;
+    if (saved_as) strncpy(saved_as, path + 13, n);
+    logf("screenshot %s\n", path);
+    return 0;
+}
+
+// ================================================================ internal flash library
+static void flash_dir_write(void) {
+    static uint8_t blk[16 + 15 * sizeof(fl_entry_t)];
+    memset(blk, 0, sizeof blk);
+    memcpy(blk, "GBCP", 4);
+    blk[4] = (uint8_t)fl_count;
+    memcpy(blk + 16, fl_dir, fl_count * sizeof(fl_entry_t));
+    flash_write(GAMES_BASE, blk, sizeof blk);
+}
+
+// copies an SD ROM after the last game in the internal flash
+static int flash_add_game(const char *path) {
+    if (fl_count >= 15) { message_screen("Flash list is full", "15 games at most"); wait_ms(1500); return -1; }
+    uint32_t end = 0x1000;
+    for (int i = 0; i < fl_count; i++) {
+        uint32_t e = (fl_dir[i].ofs + fl_dir[i].size + 0xFFF) & ~0xFFFu;
+        if (e > end) end = e;
+    }
+    FIL f;
+    if (!sd_mounted || f_open(&f, path, FA_READ) != FR_OK) { message_screen("Can't open file", ""); wait_ms(1500); return -1; }
+    uint32_t size = f_size(&f);
+    if (size < 0x8000 || GAMES_BASE + end + size > SAVE_BASE) {
+        f_close(&f);
+        message_screen(size < 0x8000 ? "File too small" : "Not enough room", "in the internal flash");
+        wait_ms(1500);
+        return -1;
+    }
+    const char *b = strrchr(path, '/');
+    b = b ? b + 1 : path;
+    fl_entry_t e;
+    memset(&e, 0, sizeof e);
+    int k = 0;
+    while (b[k] && b[k] != '.' && k < 23) { e.name[k] = b[k]; k++; }
+    e.ofs = end;
+    e.size = size;
+    for (uint32_t o = 0; o < size; o += 0x10000) {
+        progress_screen("Copying to flash", e.name, o, size);
+        uint32_t n = size - o < 0x10000 ? size - o : 0x10000;
+        UINT br;
+        if (f_read(&f, (void *)sdram(TMP_BUF), n, &br) != FR_OK || br != n) {
+            f_close(&f);
+            message_screen("Read error", e.name);
+            wait_ms(1500);
+            return -1;
+        }
+        flash_write_sdram(GAMES_BASE + end + o, TMP_BUF, (n + 0xFFF) & ~0xFFFu);
+    }
+    f_close(&f);
+    progress_screen("Copying to flash", e.name, size, size);
+    fl_dir[fl_count++] = e;
+    flash_dir_write();
+    logf("flash: added %s at %x, %u bytes\n", e.name, e.ofs, size);
+    return 0;
+}
+
+// removes a game from the list; the save slots of the following games move down with them
+static void flash_del_game(int idx) {
+    if (idx < 0 || idx >= fl_count) return;
+    if (game.loaded && game.src == 1) {
+        if (game.flash_idx == idx) game.loaded = 0;
+        else if (game.flash_idx > idx) game.flash_idx--;
+    }
+    if (flash_saves) {
+        for (int s = idx; s < fl_count - 1; s++) {
+            progress_screen("Moving saves", fl_dir[s + 1].name, s - idx, fl_count - 1 - idx);
+            flash_read_sdram(slot_addr(s + 1), TMP_BUF, SAVE_SLOT);
+            flash_update_sdram(slot_addr(s), TMP_BUF, SAVE_SLOT);
+        }
+        flash_erase_range(slot_addr(fl_count - 1), 0x1000);     // the header sector marks it empty
+    }
+    memmove(&fl_dir[idx], &fl_dir[idx + 1], (fl_count - 1 - idx) * sizeof(fl_entry_t));
+    fl_count--;
+    flash_dir_write();
+    for (int i = 0; i < N_RECENT; i++) {        // recent entries point at flash indices too
+        recent_t *r = &ex.rec[i];
+        if (r->src != 1) continue;
+        if (r->idx == idx) { memmove(r, r + 1, (N_RECENT - 1 - i) * sizeof *r); memset(&ex.rec[N_RECENT - 1], 0, sizeof *r); i--; }
+        else if (r->idx > idx) r->idx--;
+        ex_dirty = 1;
+    }
+}
+
+// ================================================================ system update from the SD card
+#define UPD_FW    "/opgbc_fw.bin"
+#define UPD_FPGA  "/opgbc_fpga.bin"
+#define FW_ADDR   0x100000u
+#define FPGA_MAX  0x100000u
+
+typedef struct { int present; uint32_t size; char ver[16]; int valid; } updfile_t;
+static updfile_t upd_fw, upd_fpga;
+
+// big, calm progress screen for updates: title, file, step list, bar, warning
+static void upd_screen(const char *what, const char *file, int step, uint32_t done, uint32_t total) {
+    static const char *const steps[3] = { "Reading", "Writing", "Verifying" };
+    uint8_t bg = CL_NAVY;
+    osd_clear(AT(CL_WHITE, bg));
+    osd_put(5, 3, G_FLASH, AT(CL_BLUE, bg));
+    osd_text(7, 3, "System Update", AT(CL_WHITE, bg));
+    osd_text(7, 5, what, AT(CL_LIGHT, bg));
+    osd_textn(7, 6, file, 30, AT(CL_GREY, bg));
+    for (int i = 0; i < 3; i++) {
+        uint8_t c = i < step ? CL_GB3 : i == step ? CL_WHITE : CL_LINE;
+        osd_put(7, 9 + i * 2, i < step ? G_CHECK : i == step ? G_CHEV_R : G_BULLET, AT(c, bg));
+        osd_text(9, 9 + i * 2, steps[i], AT(c, bg));
+    }
+    int w = 30, f = total ? (int)((uint64_t)done * (w - 2) / total) : 0;
+    osd_pill(6, 17, w, CL_LINE, bg);
+    if (f > 0) { osd_put(6, 17, G_PILL_L | EXT, AT(CL_BLUE, bg)); osd_fill(7, 17, f, ' ', AT(CL_WHITE, CL_BLUE)); }
+    if (f >= w - 2) osd_put(6 + w - 1, 17, G_PILL_R | EXT, AT(CL_BLUE, bg));
+    char pc[8];
+    sfmt(pc, sizeof pc, "%u%%", total ? (unsigned)((uint64_t)done * 100 / total) : 0);
+    osd_text(37, 17, pc, AT(CL_WHITE, bg));
+    osd_put(6, 20, G_POWER, AT(CL_YELLOW, bg));
+    osd_text(8, 20, "Do not switch off", AT(CL_YELLOW, bg));
+    osd_present();
+
+    lcd_clear(AT(CL_WHITE, bg));
+    lcd_put(0, 0, G_FLASH, AT(CL_BLUE, bg));
+    lcd_text(2, 0, "Update", AT(CL_WHITE, bg));
+    lcd_textn(0, 2, what, 16, AT(CL_LIGHT, bg));
+    for (int i = 0; i < 3; i++) {
+        uint8_t c = i < step ? CL_GB3 : i == step ? CL_WHITE : CL_LINE;
+        lcd_put(1, 4 + i, i < step ? G_CHECK : i == step ? G_CHEV_R : G_BULLET, AT(c, bg));
+        lcd_text(3, 4 + i, steps[i], AT(c, bg));
+    }
+    int lf = total ? (int)((uint64_t)done * 14 / total) : 0;
+    lcd_pillx(1, 8, 14, CL_LINE, bg);
+    for (int x = 0; x < lf; x++) lcd_put(1 + x, 8, x == 0 ? (G_PILL_L | EXT) : x == 13 ? (G_PILL_R | EXT) : ' ', x == 0 || x == 13 ? AT(CL_BLUE, bg) : AT(CL_WHITE, CL_BLUE));
+    lcd_text(8 - (int)strlen(pc) / 2, 9, pc, AT(CL_WHITE, bg));
+    lcd_put(1, 11, G_POWER, AT(CL_YELLOW, bg));
+    lcd_text(3, 11, "Keep power", AT(CL_YELLOW, bg));
+    lcd_present();
+}
+
+// reads a whole update file into SDRAM at TMP_BUF; returns its size or 0
+static uint32_t upd_read(const char *path, uint32_t max, const char *what) {
+    FIL f;
+    if (!sd_mounted || f_open(&f, path, FA_READ) != FR_OK) return 0;
+    uint32_t size = f_size(&f);
+    if (size == 0 || size > max) { f_close(&f); return 0; }
+    for (uint32_t o = 0; o < size; o += 0x8000) {
+        upd_screen(what, path + 1, 0, o, size);
+        UINT br;
+        uint32_t n = size - o < 0x8000 ? size - o : 0x8000;
+        if (f_read(&f, (void *)sdram(TMP_BUF + o), n, &br) != FR_OK || br != n) { f_close(&f); return 0; }
+    }
+    f_close(&f);
+    return size;
+}
+
+static void upd_probe(void) {
+    memset(&upd_fw, 0, sizeof upd_fw);
+    memset(&upd_fpga, 0, sizeof upd_fpga);
+    if (!sd_mounted) sd_mount();
+    if (!sd_mounted) return;
+    FILINFO fi;
+    if (f_stat(UPD_FW, &fi) == FR_OK) {
+        upd_fw.present = 1;
+        upd_fw.size = (uint32_t)fi.fsize;
+        // fw.bin: u32 length + code; the version follows "GBC firmware " in the code
+        FIL f;
+        static char buf[512];
+        if (f_open(&f, UPD_FW, FA_READ) == FR_OK) {
+            UINT br;
+            uint32_t len = 0;
+            f_read(&f, &len, 4, &br);
+            upd_fw.valid = br == 4 && len + 4 == upd_fw.size && len < 0x70000;
+            strcpy(upd_fw.ver, "?");
+            static const char key[] = "GBC firmware ";
+            while (f_read(&f, buf, sizeof buf, &br) == FR_OK && br > 0) {
+                for (UINT i = 0; i + sizeof key + 8 < br; i++)
+                    if (!memcmp(buf + i, key, sizeof key - 1)) {
+                        int k = 0;
+                        const char *v = buf + i + sizeof key - 1;
+                        while (k < 15 && v[k] > ' ' && v[k] < 127) { upd_fw.ver[k] = v[k]; k++; }
+                        upd_fw.ver[k] = 0;
+                        goto found;
+                    }
+                if (br == sizeof buf) f_lseek(&f, f_tell(&f) - 32);   // a key may span two blocks
+                else break;
+            }
+        found:
+            f_close(&f);
+        }
+    }
+    if (f_stat(UPD_FPGA, &fi) == FR_OK) {
+        upd_fpga.present = 1;
+        upd_fpga.size = (uint32_t)fi.fsize;
+        upd_fpga.valid = upd_fpga.size >= 0x10000 && upd_fpga.size <= FPGA_MAX;
+    }
+}
+
+// writes the file to flash and checks it; 0 when the flash holds it
+static int upd_install(int fpga) {
+    const char *path = fpga ? UPD_FPGA : UPD_FW;
+    const char *what = fpga ? "FPGA bitstream" : "Firmware";
+    uint32_t addr = fpga ? 0 : FW_ADDR;
+    uint32_t size = upd_read(path, fpga ? FPGA_MAX : 0x70004, what);
+    if (!size) { message_screen("Can't read the file", path + 1); wait_ms(2000); return -1; }
+    uint32_t len = (size + 0xFFF) & ~0xFFFu;
+    for (uint32_t o = size; o < len; o++) sdram(TMP_BUF)[o] = 0xFF;
+    for (uint32_t o = 0; o < len; o += 0x10000) {
+        upd_screen(what, path + 1, 1, o, len);
+        uint32_t n = len - o < 0x10000 ? len - o : 0x10000;
+        flash_write_sdram(addr + o, TMP_BUF + o, n);
+    }
+    // verify in 32 KB pieces
+    int bad = 0;
+    for (uint32_t o = 0; o < size && !bad; o += 0x8000) {
+        upd_screen(what, path + 1, 2, o, size);
+        uint32_t n = size - o < 0x8000 ? size - o : 0x8000;
+        flash_read_sdram(addr + o, TMP_BUF2, n);
+        volatile uint8_t *a = sdram(TMP_BUF + o), *b = sdram(TMP_BUF2);
+        for (uint32_t i = 0; i < n; i++) if (a[i] != b[i]) { bad = 1; break; }
+    }
+    upd_screen(what, path + 1, bad ? 2 : 3, size, size);
+    logf("update %s: %u bytes, %s\n", what, size, bad ? "VERIFY FAILED" : "ok");
+    return bad ? -1 : 0;
+}
+
+// restarts the menu CPU through the boot ROM, which loads the firmware from flash again
+static void reboot_firmware(void) {
+    settings_save();
+    extra_save();
+    ctrl = C_CORE_RST;
+    ctrl_write();
+    __asm__ volatile("li t0, 0x01000000\n jr t0" ::: "t0", "memory");
+}
+
 // ---------------------------------------------------------------- home screen
 extern const uint8_t home_rom[], home_rom_end[];
 static int home_running;                // the home screen ROM runs in the core (no game loaded)
@@ -553,9 +1033,16 @@ static int load_game_rom(int src, int idx, const char *path) {
 }
 
 static int load_game(int src, int idx, const char *path) {
+    playtime_flush();
     home_running = 0;
+    npatch = 0;                         // the ROM in SDRAM is replaced
     int r = load_game_rom(src, idx, path);
     if (r) start_home();                // nothing runs after a failed load: back to the home screen
+    else {
+        recent_add(src, idx, path, game.name);
+        if (cheats_apply()) logf("cheats: %d patches\n", npatch);
+    }
+    extra_save();
     return r;
 }
 
@@ -629,14 +1116,17 @@ static const uint8_t dim_seconds[4] = { 0, 15, 30, 60 };
 // ================================================================ menu model
 enum {
     P_MAIN, P_LIBRARY, P_BROWSER, P_DISPLAY, P_AUDIO, P_CONTROLS, P_SYSTEM, P_INFO,
-    P_CART, P_FILEACT, P_GAME, P_POWER, P_SLEEP, P_CHOICE
+    P_CART, P_FILEACT, P_GAME, P_POWER, P_SLEEP, P_CHOICE,
+    P_RECENT, P_CHEATS, P_CHEATACT, P_CODE, P_FLACT, P_UPDATE, P_UPDCONFIRM
 };
 enum {
     I_NONE, I_RESUME, I_LIBRARY, I_SAVE, I_RESET, I_PG_DISPLAY, I_PG_AUDIO, I_PG_CONTROLS,
     I_PG_SYSTEM, I_PG_INFO, I_SLEEP_NOW,
     I_SRC_SD, I_SRC_FLASH, I_FLASH_GAME, I_FILE, I_DIR, I_UP,
     I_OPT, I_DEFAULTS, I_INFO,
-    I_SRC_CART, I_PLAY_CART, I_ERASE_CART, I_PLAY_SD, I_WRITE_CART, I_PG_POWER, I_CHOICE
+    I_SRC_CART, I_PLAY_CART, I_ERASE_CART, I_PLAY_SD, I_WRITE_CART, I_PG_POWER, I_CHOICE,
+    I_PG_RECENT, I_RECENT, I_SHOT, I_PG_CHEATS, I_CHEAT, I_CHEAT_ADD, I_CHEAT_TOGGLE, I_CHEAT_EDIT,
+    I_CHEAT_DEL, I_COPY_FLASH, I_FL_PLAY, I_FL_DEL, I_PG_UPDATE, I_UPD_FW, I_UPD_FPGA, I_UPD_GO
 };
 
 typedef struct {
@@ -674,6 +1164,11 @@ static const char *const o_fps[]   = { "60 fps", "30 fps" };
 static const char *const o_dim[]   = { "Off", "15 s", "30 s", "60 s" };
 static const char *const o_poll[]  = { "200 ms", "500 ms" };
 static const char *const o_spkmode[] = { "PWM 66 kHz", "Sigma-delta" };
+static uint8_t ff_on;                   // fast forward toggled in the menu
+static int ch_sel, fl_sel, upd_sel;     // selected cheat, flash game, update file
+static uint8_t ed_dig[9];               // code editor: 0..15, 16 = blank
+static int ed_pos, ed_slot;             // cursor, cheat slot (-1: new code)
+static char shot_msg[40];
 
 static item_t *add(uint8_t id, uint8_t icon, const char *label, const char *desc) {
     if (nitems >= MAX_ITEMS) return &items[MAX_ITEMS - 1];
@@ -751,6 +1246,20 @@ static item_t ch_item;                  // copy of the setting's item
 static int    ch_ret_page, ch_ret_cursor;
 static char   ch_parent[48];
 
+// game items shared by the main page and the Game page
+static void add_game_extras(void) {
+    add_opt(G_PLAY, "Fast Forward", "Double speed while on. Holding R on a DualShock does the same.", &ff_on, 2, o_offon);
+    item_t *it = add(I_SHOT, G_DISPLAY, "Screenshot", "Save the picture as a BMP in /Screenshots on the SD card.");
+    if (shot_msg[0]) strncpy(it->value, shot_msg, sizeof it->value - 1);
+    it = add(I_PG_CHEATS, G_STAR, "Cheats", "Game Genie codes for this game.");
+    cheatset_t *cs = cheats_for(0);
+    if (cs && cs->n) {
+        int on = 0;
+        for (int i = 0; i < cs->n; i++) on += (cs->on >> i) & 1;
+        sfmt(it->value, sizeof it->value, "%d on", on);
+    }
+}
+
 static void build_page(void) {
     nitems = 0;
     switch (page) {
@@ -765,6 +1274,10 @@ static void build_page(void) {
             strncpy(it->value, game.name, 30);
         }
         add(I_LIBRARY, G_LIBRARY, "Library", "Choose a game from the SD card or the internal flash.");
+        if (recent_count()) {
+            item_t *r = add(I_PG_RECENT, G_PLAY, "Recent", "The last games you played, with the time spent in each.");
+            sfmt(r->value, sizeof r->value, "%d", recent_count());
+        }
         if (game.loaded && game.battery && game.save_bytes) {
             item_t *it = add(I_SAVE, G_SAVE, "Save Game", "Write the cartridge save now. Autosave also does this on its own.");
             if (game.save_pending) strcpy(it->value, "Unsaved changes");
@@ -772,6 +1285,7 @@ static void build_page(void) {
             else strcpy(it->value, game.src == 2 ? "SD card" : "Internal flash");
         }
         if (game.loaded) add(I_RESET, G_RESET, "Reset Game", "Restart the game. The save is written first.");
+        if (game.loaded) add_game_extras();
         add(I_PG_DISPLAY, G_DISPLAY, "Display", "Display mode, palettes, HDMI and LCD.");
         add(I_PG_AUDIO, G_AUDIO, "Audio", "Volume and the buzzer / speaker output.");
         add(I_PG_CONTROLS, G_PAD, "Controls", "Button layout and shortcuts.");
@@ -791,6 +1305,78 @@ static void build_page(void) {
             else if (game.saved_once) sfmt(it->value, sizeof it->value, "%us ago", (ms_now() - game.saved_ms) / 1000);
         }
         add(I_RESET, G_RESET, "Reset Game", "Restart the game. The save is written first.");
+        add_game_extras();
+        break;
+    }
+    case P_RECENT:
+        strcpy(page_title, "Recent");
+        for (int i = 0; i < recent_count(); i++) {
+            recent_t *r = &ex.rec[i];
+            item_t *it = add(I_RECENT, r->src == 2 ? G_SDCARD : r->src == 3 ? G_CART : G_FLASH, r->name,
+                             r->src == 2 ? "From the SD card." : r->src == 3 ? "From the cartridge." : "From the internal flash.");
+            it->arg = i;
+            uint32_t secs = r->secs + (i == 0 && game.loaded ? play_ms / 1000 : 0);
+            fmt_playtime(it->value, sizeof it->value, secs);
+        }
+        break;
+    case P_CHEATS: {
+        strcpy(page_title, "Cheats");
+        cheatset_t *cs = cheats_for(0);
+        for (int i = 0; cs && i < cs->n; i++) {
+            item_t *it = add(I_CHEAT, G_STAR, "", "Game Genie code. A: switch on or off, edit, delete.");
+            gg_format(it->value + 20, cs->code[i]);            // label text lives in the value buffer tail
+            it->label = it->value + 20;
+            it->arg = i;
+            strcpy(it->value, (cs->on >> i) & 1 ? "On" : "Off");
+        }
+        if (!cs || cs->n < N_CODES) add(I_CHEAT_ADD, G_CHEV_R, "Add Code", "Enter a 6 or 9 digit Game Genie code (ABC-DEF or ABC-DEF-GHI).");
+        add_info("Active patches", "%d", npatch);
+        break;
+    }
+    case P_CHEATACT: {
+        cheatset_t *cs = cheats_for(0);
+        char b[16];
+        gg_format(b, cs ? cs->code[ch_sel] : "");
+        strncpy(page_title, b, sizeof page_title - 1);
+        item_t *it = add(I_CHEAT_TOGGLE, G_CHECK, "Enabled", "Patch the ROM with this code.");
+        strcpy(it->value, cs && ((cs->on >> ch_sel) & 1) ? "On" : "Off");
+        add(I_CHEAT_EDIT, G_GEAR, "Edit Code", "Change the digits.");
+        add(I_CHEAT_DEL, G_RESET, "Delete Code", "Remove the code from this game.");
+        break;
+    }
+    case P_CODE:
+        strcpy(page_title, "Game Genie Code");
+        break;
+    case P_FLACT:
+        strncpy(page_title, fl_dir[fl_sel].name, sizeof page_title - 1);
+        add(I_FL_PLAY, G_PLAY, "Play", "Load the game from the internal flash.");
+        add(I_FL_DEL, G_RESET, "Delete from Flash", "Remove the game; its save goes with it.");
+        add_info("Size", "%u KB", fl_dir[fl_sel].size >> 10);
+        break;
+    case P_UPDATE: {
+        strcpy(page_title, "System Update");
+        add_info("Installed", "firmware " FW_VERSION);
+        item_t *it = add(I_UPD_FW, G_FLASH, "Install Firmware", "opgbc_fw.bin in the SD root: the menu firmware.");
+        if (!upd_fw.present) strcpy(it->value, "not on SD");
+        else if (!upd_fw.valid) strcpy(it->value, "invalid");
+        else sfmt(it->value, sizeof it->value, "v%s", upd_fw.ver);
+        it = add(I_UPD_FPGA, G_FLASH, "Install Bitstream", "opgbc_fpga.bin in the SD root: the FPGA design (tools/make_update.py).");
+        if (!upd_fpga.present) strcpy(it->value, "not on SD");
+        else if (!upd_fpga.valid) strcpy(it->value, "invalid");
+        else sfmt(it->value, sizeof it->value, "%u KB", upd_fpga.size >> 10);
+        add_info("SD files", "opgbc_fw.bin");
+        add_info("", "opgbc_fpga.bin");
+        break;
+    }
+    case P_UPDCONFIRM: {
+        updfile_t *u = upd_sel ? &upd_fpga : &upd_fw;
+        strcpy(page_title, upd_sel ? "FPGA Bitstream" : "Firmware");
+        if (upd_sel) add_info("File", "opgbc_fpga.bin, %u KB", u->size >> 10);
+        else add_info("File", "opgbc_fw.bin, v%s", u->ver);
+        add(I_UPD_GO, G_CHECK, "Install Now", upd_sel ? "Writes the bitstream to flash. Power off and on afterwards." :
+                                                       "Writes the firmware to flash and restarts the menu.");
+        add_info("Takes", upd_sel ? "about 30 s" : "about 5 s");
+        add_info("Keep", "the power on");
         break;
     }
     case P_SLEEP:
@@ -845,6 +1431,8 @@ static void build_page(void) {
         (void)it;
         it = add(I_WRITE_CART, G_CART, "Write to Cartridge", "Copy the game and its save to the W25Q flash, then play it from there.");
         strncpy(it->value, cart_size ? (cart_valid ? "replaces game" : "empty") : "no chip", 22);
+        it = add(I_COPY_FLASH, G_FLASH, "Copy to Internal Flash", "Add the game to the internal flash, so it plays without the card.");
+        sfmt(it->value, sizeof it->value, "%d / 15", fl_count);
         break;
     }
     case P_BROWSER:
@@ -874,10 +1462,14 @@ static void build_page(void) {
         add_opt(G_AUDIO, "Speaker", "Buzzer or small speaker on pins 76 / 75 (sigma-delta audio).", &set.speaker, 2, o_offon);
         add_opt(G_AUDIO, "Speaker Signal", "PWM suits buzzers and transistors; sigma-delta needs an RC filter or amp.", &set.spk_mode, 2, o_spkmode);
         add_opt(G_AUDIO, "Speaker Boost", "Extra gain for the speaker. Too high clips loud sounds.", &set.spk_boost, 4, o_boost);
+        add_opt(G_AUDIO, "Menu Sounds", "Short clicks when moving and selecting in the menu.", &set.menu_snd, 2, o_offon);
         break;
     case P_CONTROLS:
         strcpy(page_title, "Controls");
         add_opt(G_PAD, "Swap A / B", "Exchange the A and B buttons.", &set.swap_ab, 2, o_offon);
+        add_opt(G_PAD, "Link Port", "Link cable to an original Game Boy: pins 41 SC, 42 SI, 56 SO through a 3.3 / 5 V level shifter.", &set.link_en, 2, o_offon);
+        add_info("Fast forward", "Hold R (DualShock)");
+        add_info("Screenshot", "L (DualShock)");
         add_info("Open menu", "SELECT + START, S1");
         add_info("HDMI on / off", "Hold S1");
         add_info("Reset game", "S2");
@@ -892,6 +1484,7 @@ static void build_page(void) {
         add_opt(G_CHECK, "Save Notifications", "Show a short message when the save was written.", &set.toasts, 2, o_offon);
         add_opt(G_PLAY, "Start-up", "Start the last game or open the menu at power-up.", &set.boot_menu, 2, o_boot);
         add(I_DEFAULTS, G_RESET, "Reset Settings", "Restore all settings to their defaults.");
+        add(I_PG_UPDATE, G_FLASH, "System Update", "Install new firmware or FPGA bitstream from the SD card.");
         break;
     case P_INFO: {
         strcpy(page_title, "Info");
@@ -933,6 +1526,7 @@ static void build_cats(void) {
     ncats = 0;
     if (game.loaded) cats[ncats++] = (cat_t){ G_PLAY, "Game", P_GAME };
     cats[ncats++] = (cat_t){ G_LIBRARY, "Library", P_LIBRARY };
+    if (recent_count()) cats[ncats++] = (cat_t){ G_PLAY, "Recent", P_RECENT };
     cats[ncats++] = (cat_t){ G_DISPLAY, "Display", P_DISPLAY };
     cats[ncats++] = (cat_t){ G_AUDIO, "Audio", P_AUDIO };
     cats[ncats++] = (cat_t){ G_PAD, "Controls", P_CONTROLS };
@@ -1467,7 +2061,7 @@ static const char *aos_parent(void) {
     switch (page) {
     case P_MAIN: return "";
     case P_CHOICE: return ch_parent;
-    case P_BROWSER: case P_CART: case P_FILEACT: return "Library";
+    case P_BROWSER: case P_CART: case P_FILEACT: case P_FLACT: return "Library";
     default: return "Menu";
     }
 }
@@ -1588,7 +2182,89 @@ static void draw_lcd(void) {
     lcd_present();
 }
 
+static void go(int p, int keep_cursor);
+
+// ---- Game Genie code editor (all themes)
+static int ed_err;
+
+static int ed_code(char *out) {          // digits as a string; 0 unless 6 or 9 digits
+    int n = 0;
+    while (n < 9 && ed_dig[n] < 16) { out[n] = "0123456789ABCDEF"[ed_dig[n]]; n++; }
+    out[n] = 0;
+    for (int i = n; i < 9; i++) if (ed_dig[i] < 16) return 0;
+    return n == 6 || n == 9;
+}
+
+static void draw_code(void) {
+    uint8_t bg = CL_NAVY;
+    char code[10], b[48];
+    int ok = ed_code(code);
+    osd_clear(AT(CL_WHITE, bg));
+    osd_put(5, 3, G_STAR, AT(CL_YELLOW, bg));
+    osd_text(7, 3, ed_slot >= 0 ? "Edit Game Genie Code" : "New Game Genie Code", AT(CL_WHITE, bg));
+    osd_textn(7, 4, game.name, 30, AT(CL_GREY, bg));
+    for (int i = 0; i < 9; i++) {
+        int x = 10 + (i + i / 3) * 2;
+        char c = ed_dig[i] < 16 ? "0123456789ABCDEF"[ed_dig[i]] : '_';
+        int s = i == ed_pos;
+        if (s) { osd_put(x, 9, G_UP, AT(CL_WHITE, bg)); osd_put(x, 11, G_DOWN, AT(CL_WHITE, bg)); }
+        osd_put(x, 10, (uint8_t)c, s ? AT(CL_BLACK, CL_WHITE) : AT(ed_dig[i] < 16 ? CL_WHITE : CL_LINE, CL_PANEL));
+        if (i == 2 || i == 5) osd_put(x + 2, 10, '-', AT(CL_GREY, bg));
+    }
+    uint16_t a; uint8_t v; int cmp;
+    if (ok && gg_decode(code, &a, &v, &cmp)) {
+        if (cmp >= 0) sfmt(b, sizeof b, "Address %04X   Data %02X   If %02X", a, v, cmp);
+        else sfmt(b, sizeof b, "Address %04X   Data %02X", a, v);
+        osd_text(21 - (int)strlen(b) / 2, 14, b, AT(CL_LIGHT, bg));
+    } else osd_text(11, 14, "6 or 9 digits: ABC-DEF-GHI", AT(CL_GREY, bg));
+    if (ed_err) osd_text(14, 16, "Not a valid code", AT(CL_RED, bg));
+    osd_text(5, 20, "\x1a\x1b digit   \x05\x04 move   A save   B cancel", AT(CL_GREY, bg));
+    osd_present();
+
+    lcd_clear(AT(CL_WHITE, bg));
+    lcd_put(0, 0, G_STAR, AT(CL_YELLOW, bg));
+    lcd_text(2, 0, "Game Genie", AT(CL_WHITE, bg));
+    for (int i = 0; i < 9; i++) {
+        int x = 2 + i + i / 3;
+        char c = ed_dig[i] < 16 ? "0123456789ABCDEF"[ed_dig[i]] : '_';
+        int s = i == ed_pos;
+        if (s) { lcd_put(x, 3, G_UP, AT(CL_WHITE, bg)); lcd_put(x, 5, G_DOWN, AT(CL_WHITE, bg)); }
+        lcd_put(x, 4, (uint8_t)c, s ? AT(CL_BLACK, CL_WHITE) : AT(ed_dig[i] < 16 ? CL_WHITE : CL_LINE, bg));
+        if (i == 2 || i == 5) lcd_put(x + 1, 4, '-', AT(CL_GREY, bg));
+    }
+    if (ok && gg_decode(code, &a, &v, &cmp)) {
+        sfmt(b, sizeof b, "%04X=%02X", a, v);
+        lcd_text(4, 7, b, AT(CL_LIGHT, bg));
+    }
+    if (ed_err) lcd_text(2, 8, "Not valid", AT(CL_RED, bg));
+    lcd_text(0, 10, "\x1a\x1b digit \x05\x04 move", AT(CL_GREY, bg));
+    lcd_text(0, 11, "A save  B cancel", AT(CL_GREY, bg));
+    lcd_present();
+}
+
+static void code_save(void) {
+    char code[10];
+    uint16_t a; uint8_t v; int cmp;
+    if (!ed_code(code) || !gg_decode(code, &a, &v, &cmp) || a >= 0x8000) { ed_err = 1; beep(220, 80); return; }
+    cheatset_t *cs = cheats_for(1);
+    int slot = ed_slot;
+    if (slot < 0) {
+        if (cs->n >= N_CODES) { ed_err = 1; return; }
+        slot = cs->n++;
+        cs->on |= (uint8_t)(1 << slot);
+    }
+    memset(cs->code[slot], 0, sizeof cs->code[slot]);
+    strcpy(cs->code[slot], code);
+    ex_dirty = 1;
+    cheats_apply();
+    extra_save();
+    snd_ok();
+    go(P_CHEATS, 0);
+    cursor = slot;
+}
+
 static void draw_menu(void) {
+    if (page == P_CODE) { draw_code(); return; }
     if (cursor != mq_cursor || page != mq_page) { mq_cursor = cursor; mq_page = page; mq_t0 = ms_now(); }
     mq_on = 0;
     switch (set.theme) {
@@ -1762,10 +2438,108 @@ static int activate(item_t *it, int dir) {
         go(P_CART, 0);
         break;
     case I_FLASH_GAME:
-        if (load_game(1, it->arg, 0) == 0) return 1;
-        osd_invalidate();
-        go(P_BROWSER, 1);
+        fl_sel = it->arg;
+        go(P_FLACT, 0);
         break;
+    case I_FL_PLAY:
+        if (load_game(1, fl_sel, 0) == 0) return 1;
+        osd_invalidate();
+        go(P_FLACT, 1);
+        break;
+    case I_FL_DEL:
+        message_screen("Deleting", fl_dir[fl_sel].name);
+        flash_del_game(fl_sel);
+        extra_save();
+        osd_invalidate();
+        strcpy(page_title, "Internal Flash");
+        go(P_BROWSER, 0);
+        break;
+    case I_COPY_FLASH:
+        if (flash_add_game(act_path) == 0) { message_screen("Copied to flash", page_title); wait_ms(1000); }
+        osd_invalidate();
+        go(P_FILEACT, 1);
+        break;
+    case I_PG_RECENT: go(P_RECENT, 0); break;
+    case I_RECENT: {
+        recent_t r = ex.rec[it->arg];
+        int ok = -1;
+        if (r.src == 2) { if (!sd_mounted) sd_mount(); ok = load_game(2, 0, r.path); }
+        else if (r.src == 1 && r.idx < fl_count) ok = load_game(1, r.idx, 0);
+        else if (r.src == 3) { cart_probe(); ok = load_game(3, 0, 0); }
+        if (ok == 0) return 1;
+        osd_invalidate();
+        go(P_RECENT, 1);
+        break;
+    }
+    case I_SHOT: {
+        char nm[32];
+        message_screen("Screenshot", "saving to the SD card");
+        if (screenshot(nm, sizeof nm) == 0) sfmt(shot_msg, sizeof shot_msg, "%s", nm);
+        else strcpy(shot_msg, "failed");
+        osd_invalidate();
+        go(page, 1);
+        break;
+    }
+    case I_PG_CHEATS: go(P_CHEATS, 0); break;
+    case I_CHEAT: ch_sel = it->arg; go(P_CHEATACT, 0); break;
+    case I_CHEAT_TOGGLE: {
+        cheatset_t *cs = cheats_for(0);
+        if (cs) { cs->on ^= (uint8_t)(1 << ch_sel); ex_dirty = 1; cheats_apply(); extra_save(); }
+        go(P_CHEATACT, 1);
+        break;
+    }
+    case I_CHEAT_ADD:
+    case I_CHEAT_EDIT: {
+        cheatset_t *cs = cheats_for(0);
+        ed_slot = it->id == I_CHEAT_EDIT ? ch_sel : -1;
+        for (int i = 0; i < 9; i++) ed_dig[i] = i < 6 ? 0 : 16;
+        if (ed_slot >= 0 && cs)
+            for (int i = 0; i < 9; i++) { int v = hexval(cs->code[ed_slot][i]); ed_dig[i] = v < 0 ? 16 : (uint8_t)v; }
+        ed_pos = 0;
+        go(P_CODE, 0);
+        break;
+    }
+    case I_CHEAT_DEL: {
+        cheatset_t *cs = cheats_for(0);
+        if (cs && ch_sel < cs->n) {
+            memmove(cs->code[ch_sel], cs->code[ch_sel + 1], (cs->n - 1 - ch_sel) * sizeof cs->code[0]);
+            uint8_t lo = cs->on & ((1 << ch_sel) - 1), hi = (uint8_t)((cs->on >> (ch_sel + 1)) << ch_sel);
+            cs->on = lo | hi;
+            cs->n--;
+            ex_dirty = 1;
+            cheats_apply();
+            extra_save();
+        }
+        go(P_CHEATS, 0);
+        break;
+    }
+    case I_PG_UPDATE:
+        message_screen("System Update", "looking at the SD card");
+        upd_probe();
+        osd_invalidate();
+        go(P_UPDATE, 0);
+        break;
+    case I_UPD_FW:
+    case I_UPD_FPGA: {
+        updfile_t *u = it->id == I_UPD_FPGA ? &upd_fpga : &upd_fw;
+        if (!u->present || !u->valid) { message_screen(u->present ? "File is not valid" : "File not found", it->id == I_UPD_FPGA ? UPD_FPGA + 1 : UPD_FW + 1); wait_ms(1500); osd_invalidate(); break; }
+        upd_sel = it->id == I_UPD_FPGA;
+        go(P_UPDCONFIRM, 0);
+        cursor = 1;
+        break;
+    }
+    case I_UPD_GO: {
+        int r = upd_install(upd_sel);
+        wait_ms(600);
+        if (r) message_screen("Verify failed", upd_sel ? "write it again or use the PC" : "write it again before restarting");
+        else if (upd_sel) message_screen("Bitstream installed", "switch the power off and on");
+        else message_screen("Firmware installed", "restarting");
+        wait_ms(r || upd_sel ? 3000 : 1200);
+        if (!r && !upd_sel) reboot_firmware();
+        osd_invalidate();
+        go(P_UPDATE, 0);
+        break;
+    }
     case I_OPT:
         if (dir < 0) *it->val = *it->val ? *it->val - 1 : it->nopt - 1;
         else *it->val = (*it->val + 1) % it->nopt;
@@ -1795,6 +2569,10 @@ static int back(void) {
     if (two_level() && page == cats[cat].page) { focus = 0; return 0; }
     switch (page) {
     case P_CHOICE: go(ch_ret_page, 0); cursor = ch_ret_cursor; break;
+    case P_CHEATACT: go(P_CHEATS, 0); cursor = ch_sel; break;
+    case P_CODE: go(ed_slot >= 0 ? P_CHEATACT : P_CHEATS, 0); break;
+    case P_FLACT: strcpy(page_title, "Internal Flash"); go(P_BROWSER, 0); cursor = fl_sel; break;
+    case P_UPDCONFIRM: go(P_UPDATE, 0); cursor = upd_sel ? 2 : 1; break;
     case P_MAIN: return game.loaded || home_running;
     case P_BROWSER:
         if (page_title[0] != 'I' && strcmp(cur_dir, "/")) {
@@ -1826,6 +2604,9 @@ static int back(void) {
 
 static void menu_run(void) {
     menu_active = 1;
+    playtime_flush();
+    extra_save();
+    shot_msg[0] = 0;
     if (set.autosave && game.save_pending) save_write();
     ctrl_bits(C_OSD | C_DIM, 1);
     if (!home_running) ctrl_bits(C_PAUSE, 1);      // the home screen keeps playing behind the menu
@@ -1848,6 +2629,22 @@ static void menu_run(void) {
             continue;
         }
         if (k & K_SEL) { lcd_dump(); continue; }    // LCD screenshot for tools/lcd_shot.py
+        if (page == P_CODE) {
+            ed_err = 0;
+            if (k & (K_UP | K_DOWN)) {
+                int mx = ed_pos >= 6 ? 17 : 16, v = ed_dig[ed_pos];
+                ed_dig[ed_pos] = (uint8_t)((k & K_UP) ? (v + 1) % mx : (v + mx - 1) % mx);
+                snd_move();
+            }
+            if (k & K_LEFT)  { ed_pos = ed_pos ? ed_pos - 1 : 8; snd_move(); }
+            if (k & K_RIGHT) { ed_pos = (ed_pos + 1) % 9; snd_move(); }
+            if (k & (K_A | K_X)) code_save();
+            else if (k & (K_B | K_Y)) { snd_back(); back(); }
+            continue;
+        }
+        if (k & (K_A | K_X)) snd_ok();
+        else if (k & (K_B | K_Y)) snd_back();
+        else if (k & (K_UP | K_DOWN | K_LEFT | K_RIGHT | K_L | K_R)) snd_move();
         if ((k & (K_START | K_S1 | K_UMENU)) && (game.loaded || home_running)) break;
         if (k & K_S2 || k & K_URESET) { reset_game(); break; }
 
@@ -1917,6 +2714,7 @@ static void dbg_update(uint32_t st) {
         fps = (uint16_t)(fr - fps_frames) * 1000u / (now - fps_ms);
         fps_frames = fr;
         fps_ms = now;
+        logf("fps %u%s\n", fps, (ctrl & C_FAST) ? " (fast forward)" : "");
     }
     char b[48], pad[9];
     uint32_t in = REG_IN;
@@ -1952,9 +2750,17 @@ int main(void) {
     if (set_addr) {
         settings_t t;
         settings_v2_t o;
+        settings_v3_t o3;
         flash_read(set_addr, &t, sizeof t);
         flash_read(set_addr, &o, sizeof o);
+        flash_read(set_addr, &o3, sizeof o3);
         if (t.magic == SET_MAGIC && t.sum == sum32(&t, sizeof t - 4)) set = t;
+        else if (o3.magic == SET_MAGIC_V3 && o3.sum == sum32(&o3, sizeof o3 - 4)) {
+            memcpy(&set.disp_mode, o3.b, 28);
+            memcpy(set.last_path, o3.last_path, sizeof set.last_path);
+            set.menu_snd = 1;
+            set.link_en = 0;
+        }
         else if (o.magic == SET_MAGIC_V2 && o.sum == sum32(&o, sizeof o - 4)) {
             memcpy(&set.disp_mode, o.b, 20);               // fields up to spk_boost
             strncpy(set.last_path, o.last_path, sizeof set.last_path - 1);
@@ -1965,6 +2771,7 @@ int main(void) {
         set_stored = set;
     }
     apply_settings();
+    extra_load();
     flash_dir_read();
     logf("flash games: %d\n", fl_count);
     sd_mount();
@@ -1993,7 +2800,7 @@ int main(void) {
     }
     flash_sleep();
 
-    uint32_t s1_down = 0, s2_down = 0;
+    uint32_t s1_down = 0, s2_down = 0, pt_last = ms_now();
     int s1_long = 0, s2_long = 0;
     uint32_t dbg_ms = 0;
     last_input_ms = ms_now();
@@ -2030,6 +2837,15 @@ int main(void) {
         int open = ((rel & K_S1) && !s1_long && now - s1_down >= 20) || (press & K_UMENU) ||
                    ((in & K_SEL) && (in & K_START) && (press & (K_SEL | K_START)));
         if (home_running && (press & (K_A | K_X | K_START))) open = 1;     // PRESS START
+        // play time (gaps over 5 s are the menu or sleep), fast forward, screenshot on L
+        if (game.loaded && !(ctrl & C_PAUSE) && now - pt_last < 5000) play_ms += now - pt_last;
+        pt_last = now;
+        int ff = game.loaded && (ff_on || (in & K_R));
+        if (ff != !!(ctrl & C_FAST)) ctrl_bits(C_FAST, ff);
+        if ((press & K_L) && game.loaded) {
+            if (screenshot(0, 0) == 0) toast("Screenshot saved", G_CHECK, CL_GB3);
+            else toast("Screenshot failed", G_INFO, CL_RED);
+        }
         if (((rel & K_S2) && !s2_long && now - s2_down >= 20) || (press & K_URESET)) reset_game();
 
         uint32_t st = REG_STAT;

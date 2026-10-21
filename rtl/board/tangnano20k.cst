@@ -115,6 +115,14 @@ IO_PORT "spk_p" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 IO_LOC  "spk_n" 75;
 IO_PORT "spk_n" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
+// Game Boy link port; the original is 5 V logic: use a level shifter (BSS138 / TXS0104)
+IO_LOC  "link_sc" 41;
+IO_PORT "link_sc" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "link_si" 42;
+IO_PORT "link_si" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "link_so" 56;
+IO_PORT "link_so" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
 // external W25Qxx flash ("cartridge"); WP and HOLD of the chip go to 3V3
 IO_LOC  "cart_cs_n" 51;
 IO_PORT "cart_cs_n" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

@@ -50,10 +50,12 @@ module iosys #(
     input             frame_tick,
     input             stat_gbc,
     input             stat_2x,
+    input       [1:0] stat_buf,     // framebuffer the display reads (the newest complete frame)
     input             cram_wr,      // cartridge RAM write strobe (level)
 
     output reg [31:0] ctrl,
     output reg [31:0] cfg,
+    output reg [31:0] beep,         // menu sound: [11:0] half period in 4 us steps, [27:16] length in ms
 
     output reg        ioctl_wr,
     output reg [24:0] ioctl_addr,
@@ -195,7 +197,7 @@ always @* begin
             6'h00: mem_rdata = 32'h4F47_0001;                       // "OG", version
             6'h01: mem_rdata = {16'd0, in_q};
             6'h02: mem_rdata = ms;
-            6'h03: mem_rdata = {frames, 13'd0, dirty, stat_2x, stat_gbc};
+            6'h03: mem_rdata = {frames, 11'd0, stat_buf, dirty, stat_2x, stat_gbc};
             6'h0C: mem_ready = ~u_busy;
             6'h0D, 6'h12: begin mem_ready = is_wr | ev | timeout; mem_rdata = {31'd0, ev}; end
             6'h0E: mem_rdata = ctrl;
@@ -250,6 +252,7 @@ always @(posedge clk) begin
             6'h0F: cfg  <= mem_wdata;
             6'h10: ioctl_addr <= mem_wdata[24:0];
             6'h11: begin ioctl_dout <= mem_wdata[15:0]; ioctl_wr <= 1; end
+            6'h13: beep <= mem_wdata;
             default: ;
         endcase else case (reg_a)
             6'h03: dirty <= 0;

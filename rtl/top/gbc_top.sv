@@ -46,6 +46,12 @@ module gbc_top (
     output            spk_p,
     output            spk_n,
 
+    // Game Boy link port (to an original Game Boy through a 3.3 V <-> 5 V level shifter):
+    // SC is driven when this side clocks the transfer, SO is the serial out, SI the serial in
+    inout             link_sc,
+    input             link_si,
+    output            link_so,
+
     output            ds_clk,
     output            ds_cs,
     output            ds_mosi,
@@ -187,8 +193,8 @@ iosys #(.CLK_HZ(33_750_000)) u_io (
     .cart_cs_n(cart_cs_n), .cart_clk(cart_clk), .cart_mosi(cart_mosi), .cart_miso(cart_miso),
     .uart_tx(uart_tx),
     .inputs({uart_reset, uart_menu, s2_s[1], s1_s[1], pad_arm}),
-    .frame_tick(lcd_vs_rise), .stat_gbc(isGBC), .stat_2x(speed), .cram_wr(cram_wr & ~gb_reset),
-    .ctrl(ctrl), .cfg(cfg),
+    .frame_tick(lcd_vs_rise), .stat_gbc(isGBC), .stat_2x(speed), .stat_buf(rd_buf), .cram_wr(cram_wr & ~gb_reset),
+    .ctrl(ctrl), .cfg(cfg), .beep(beep),
     .ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
     .osd_we(osd_we), .osd_addr(osd_waddr), .osd_data(osd_wdata),
     .txt_we(txt_we), .txt_addr(txt_waddr), .txt_data(txt_wdata),
@@ -201,6 +207,7 @@ assign ws2812  = 1'b0;
 // ctrl: [0] core reset  [1] pause  [2] ROM download  [4:3] system (auto/GBC/DMG)
 //       [5] OSD on  [6] OSD dims the game (menu; game buttons off)  [7] HDMI off
 //       [8] SPI LCD off  [9] LEDs on  [10] SDRAM power-down  [11] LCD half rate
+//       [12] fast forward  [13] framebuffer writes even with HDMI off (screenshots)  [14] link port on
 wire       core_rst   = ctrl[0];
 wire       core_pause = ctrl[1];
 wire       loading    = ctrl[2];
@@ -212,6 +219,10 @@ wire       lcd_off    = ctrl[8];
 wire       led_en     = ctrl[9];
 wire       sdram_pd   = ctrl[10];     // battery mode: SDRAM power-down between accesses
 wire       lcd_slow   = ctrl[11];     // battery mode: LCD at ~30 fps
+wire       fast_fwd   = ctrl[12];
+wire       fb_force   = ctrl[13];
+wire       link_en    = ctrl[14];
+wire [31:0] beep;
 wire       sdram_sleep;
 // cfg: [1:0] display mode  [4:2] DMG palette  [5] raw GBC colours  [6] LCD crop
 //      [7] debug lines  [11:8] LCD backlight (0..15)  [14:12] volume (0..4)  [15] swap A/B
@@ -234,7 +245,7 @@ wire [11:0] game_btn  = swap_ab ? {game_btn0[11:10], game_btn0[1], game_btn0[0],
 
 // ================================================================ Game Boy
 wire ce, ce_n, ce_2x, paused;
-ce_gen u_ce (.clk_sys(clk_sys), .pause(core_pause & ~gb_reset), .ce(ce), .ce_n(ce_n), .ce_2x(ce_2x), .paused(paused));
+ce_gen u_ce (.clk_sys(clk_sys), .pause(core_pause & ~gb_reset), .fast(fast_fwd & ~gb_reset), .ce(ce), .ce_n(ce_n), .ce_2x(ce_2x), .paused(paused));
 
 // reset: power-on, loading, menu "reset game" (stretched)
 wire gb_reset = sys_rst | ~sdram_ready | loading | core_rst;
@@ -281,7 +292,7 @@ gb u_gb (
     .joy_p54(joy_p54), .joy_din(joy_din),
     .speed(speed), .DMA_on(DMA_on),
     .gg_reset(1'b0), .gg_en(1'b0), .gg_code(129'd0), .gg_available(),
-    .sc_int_clock2(), .serial_clk_in(1'b1), .serial_clk_out(), .serial_data_in(1'b1), .serial_data_out(),
+    .sc_int_clock2(ser_int), .serial_clk_in(ser_clk_in), .serial_clk_out(ser_clk_out), .serial_data_in(ser_din), .serial_data_out(ser_dout),
     .increaseSSHeaderCount(1'b0), .cart_ram_size(cart_ram_size),
     .save_state(1'b0), .load_state(1'b0), .savestate_number(2'd0),
     .sleep_savestate(), .savestate_ovr(),
@@ -377,7 +388,7 @@ fb_writer #(.FB_BASE_W(FB_BASE_W)) u_fbw (
     .clk(clk_sys), .reset(gb_reset), .ce(ce), .isGBC(isGBC),
     .lcd_clkena(lcd_clkena), .lcd_data(lcd_data), .lcd_mode(lcd_mode), .lcd_on(lcd_on), .lcd_vsync(lcd_vsync),
     .vs_event(vs_event), .rd_buf(rd_buf),
-    .wq_empty(wq_empty), .wq_addr(wq_addr), .wq_data(wq_data), .wq_level(wq_level), .wq_pop(wq_pop), .fb_en(~hdmi_off),
+    .wq_empty(wq_empty), .wq_addr(wq_addr), .wq_data(wq_data), .wq_level(wq_level), .wq_pop(wq_pop), .fb_en(~hdmi_off | fb_force),
     .px_we(px_we), .px_first(px_first), .px_data(px_data)
 );
 
@@ -430,14 +441,47 @@ always @(posedge clk_sys) begin
 end
 always @(posedge clk_p) txt_q <= txt_ram[txt_raddr];
 
+// ================================================================ link port
+wire       ser_int, ser_clk_out, ser_dout;
+reg  [1:0] lk_sc_s = 2'b11, lk_si_s = 2'b11;
+always @(posedge clk_sys) begin lk_sc_s <= {lk_sc_s[0], link_sc}; lk_si_s <= {lk_si_s[0], link_si}; end
+wire       ser_clk_in = link_en ? lk_sc_s[1] : 1'b1;
+wire       ser_din    = link_en ? lk_si_s[1] : 1'b1;
+assign link_sc = (link_en & ser_int) ? ser_clk_out : 1'bz;
+assign link_so = link_en ? ser_dout : 1'b1;
+
 // ================================================================ audio
 wire        clk_audio;
-wire [15:0] aud_l, aud_r;
+wire [15:0] aud_gl, aud_gr;
 audio_out u_audio (
     .clk(clk_sys), .ce(ce), .mute(gb_reset | paused),
     .in_l(audio_l), .in_r(audio_r), .volume(volume),
-    .clk_audio(clk_audio), .out_l(aud_l), .out_r(aud_r)
+    .clk_audio(clk_audio), .out_l(aud_gl), .out_r(aud_gr)
 );
+// menu sounds: a short square wave from the firmware (beep register), scaled by the volume
+reg  [7:0] bp_div;                              // 4 us steps at 33.75 MHz (135 clocks)
+reg [11:0] bp_cnt, bp_len, bp_ms_div;
+reg        bp_q, bp_on;
+reg [31:0] beep_d;
+always @(posedge clk_sys) begin
+    beep_d <= beep;
+    if (beep != beep_d) begin bp_len <= beep[27:16]; bp_cnt <= 0; bp_on <= beep[27:16] != 0; end
+    else if (bp_on) begin
+        bp_div <= (bp_div == 8'd134) ? 8'd0 : bp_div + 1'd1;
+        if (bp_div == 8'd134) begin
+            if (bp_cnt >= beep[11:0]) begin bp_cnt <= 0; bp_q <= ~bp_q; end else bp_cnt <= bp_cnt + 1'd1;
+            // 250 steps of 4 us = 1 ms
+            if (bp_ms_div == 12'd249) begin
+                bp_ms_div <= 0;
+                if (bp_len <= 1) bp_on <= 0; else bp_len <= bp_len - 1'd1;
+            end else bp_ms_div <= bp_ms_div + 1'd1;
+        end
+    end
+end
+wire signed [15:0] bp_amp = $signed({4'd0, volume, 9'd0});       // 0 .. 0x800
+wire signed [15:0] bp_s   = bp_on ? (bp_q ? bp_amp : -bp_amp) : 16'sd0;
+wire [15:0] aud_l = aud_gl + bp_s;
+wire [15:0] aud_r = aud_gr + bp_s;
 // speaker: the Game Boy channels are unipolar, so the mix carries a large DC level.
 // Remove it (one-pole high-pass, ~7 Hz), boost x1..x8 with saturation, then a
 // first-order sigma-delta at clk_sys. Pins idle low when off.
