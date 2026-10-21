@@ -1,3 +1,4 @@
+// Open Pocket GBA import, 2026-10-21: whitespace normalized; logic unchanged.
 //****************************************************************************************************
 // Thumb decoder for ARM7TDMI-S processor
 // Designed by Ruslan Lepetenok
@@ -35,7 +36,7 @@ reg             ThADR_Int;
 parameter [4:0] CThBLFP = 5'b11110;		// First part of Thumb BL
 parameter [4:0] CThBLSP = 5'b11111;		// Second part of Thumb BL
 
-assign HalfWordForDecode = HalfWordAddress == 1'b0 ? InstForDecode[15:0] : 
+assign HalfWordForDecode = HalfWordAddress == 1'b0 ? InstForDecode[15:0] :
                             InstForDecode[31:16];
 
 assign ExpandedInst = ThumbDecoderEn ? DecoderOut : 		// Thumb instruction
@@ -49,7 +50,7 @@ assign ThADR = ThADR_Int & ThumbDecoderEn;
 //     else  begin
 //         if (CLKEN & StagnatePipeline == 1'b0)
 //             ThADR_Int <= ThADR_IDC;
-//     end 
+//     end
 // end
 
 always @(posedge CLK) begin
@@ -58,7 +59,7 @@ always @(posedge CLK) begin
     else  begin		// Maybe need CLKEN?
         if (CLKEN & ThBLFP_Reg_EN)
             ThBLFP_Reg <= HalfWordForDecode[10:0];
-    end 
+    end
 end
 
 // Combinatorial process
@@ -102,9 +103,9 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
-    
-    10'b0001110???: begin		
+    end
+
+    10'b0001110???: begin
         if (HalfWordForDecode[8:6] == 3'b000) begin // MOV2
             DecoderOut[31:28] = 4'b1110;
             DecoderOut[27:20] = 8'b00101001;
@@ -120,7 +121,7 @@ always @(HalfWordForDecode) begin
             DecoderOut[2:0] = HalfWordForDecode[8:6];
         end
     end
-    
+
     10'b00110?????: begin		// ADD2
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00101001;
@@ -128,8 +129,8 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[10:8]};
         DecoderOut[11:8] = 4'b0000;
         DecoderOut[7:0] = HalfWordForDecode[7:0];
-    end 
-    
+    end
+
     10'b0001100???: begin		// ADD3
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00001001;
@@ -137,8 +138,8 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
-    
+    end
+
     10'b01000100??: begin		// ADD4
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00001000;
@@ -150,7 +151,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[3] = HalfWordForDecode[6];
         DecoderOut[2:0] = HalfWordForDecode[5:3];
     end
-    
+
     10'b10100?????: begin		// ADD5
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00101000;
@@ -160,7 +161,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[7:0] = HalfWordForDecode[7:0];
         ThADR_Int = 1'b1;
     end
-    
+
     10'b10101?????: begin		// ADD6
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00101000;
@@ -168,8 +169,8 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[10:8]};
         DecoderOut[11:8] = 4'b1111;
         DecoderOut[7:0] = HalfWordForDecode[7:0];
-    end 
-    
+    end
+
     10'b101100000?: begin		// ADD7
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00101000;
@@ -178,7 +179,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:7] = 5'b11110;
         DecoderOut[6:0] = HalfWordForDecode[6:0];
     end
-    
+
     10'b0100001011: begin		// CMN
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00010111;
@@ -186,8 +187,8 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = 4'b0000;
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
-    
+    end
+
     10'b00101?????: begin		// CMP1
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00110101;
@@ -195,8 +196,8 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = 4'b0000;
         DecoderOut[11:8] = 4'b0000;
         DecoderOut[7:0] = HalfWordForDecode[7:0];
-    end 
-    
+    end
+
     10'b0100001010: begin		// CMP2
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00010101;
@@ -204,8 +205,8 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = 4'b0000;
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
-    
+    end
+
     10'b01000101??: begin		// CMP3
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00010101;
@@ -215,8 +216,8 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3] = HalfWordForDecode[6];
         DecoderOut[2:0] = HalfWordForDecode[5:3];
-    end 
-    
+    end
+
     10'b0100001101: begin		// MUL
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00000001;
@@ -225,15 +226,15 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:8] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[7:4] = 4'b1001;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
-    
+    end
+
     10'b0100001001: begin		// NEG
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:20] = 8'b00100111;
         DecoderOut[19:16] = {1'b0, HalfWordForDecode[5:3]};
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:0] = 12'b000000000000;
-    end 
+    end
 
     10'b0100000110: begin		// SBC
         DecoderOut[31:28] = 4'b1110;
@@ -242,7 +243,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     10'b0001111???: begin		// SUB1
         DecoderOut[31:28] = 4'b1110;
@@ -251,7 +252,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:3] = 9'b000000000;
         DecoderOut[2:0] = HalfWordForDecode[8:6];
-    end         
+    end
 
     10'b00111?????: begin		// SUB2
         DecoderOut[31:28] = 4'b1110;
@@ -260,7 +261,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[10:8]};
         DecoderOut[11:8] = 4'b0000;
         DecoderOut[7:0] = HalfWordForDecode[7:0];
-    end 
+    end
 
     10'b0001101???: begin		// SUB3
         DecoderOut[31:28] = 4'b1110;
@@ -269,7 +270,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
+    end
 
     10'b101100001?: begin		// SUB4
         DecoderOut[31:28] = 4'b1110;
@@ -278,7 +279,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = 4'b1101;
         DecoderOut[11:7] = 5'b11110;
         DecoderOut[6:0] = HalfWordForDecode[6:0];
-    end 
+    end
 
     // Logical Operations
     10'b0100000000: begin		// AND
@@ -288,7 +289,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     10'b0100001110: begin		// BIC
         DecoderOut[31:28] = 4'b1110;
@@ -297,7 +298,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     10'b0100000001: begin		// EOR
         DecoderOut[31:28] = 4'b1110;
@@ -306,7 +307,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     10'b0100001111: begin		// MVN
         DecoderOut[31:28] = 4'b1110;
@@ -315,7 +316,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     10'b0100001100: begin		// ORR
         DecoderOut[31:28] = 4'b1110;
@@ -324,7 +325,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     10'b0100001000: begin		// TST
         DecoderOut[31:28] = 4'b1110;
@@ -333,7 +334,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = 4'b0000;
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     // Shift/Rotate Instructions
     10'b00000?????: begin		// LSL1
@@ -344,7 +345,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:7] = HalfWordForDecode[10:6];
         DecoderOut[6:4] = 3'b000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     10'b0100000010: begin		// LSL2
         DecoderOut[31:28] = 4'b1110;
@@ -354,7 +355,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:8] = {1'b0, HalfWordForDecode[5:3]};
         DecoderOut[7:4] = 4'b0001;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[2:0]};
-    end 
+    end
 
     10'b00001?????: begin		// LSR1
         DecoderOut[31:28] = 4'b1110;
@@ -364,7 +365,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:7] = HalfWordForDecode[10:6];
         DecoderOut[6:4] = 3'b010;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     10'b0100000011: begin		// LSR2
         DecoderOut[31:28] = 4'b1110;
@@ -374,7 +375,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:8] = {1'b0, HalfWordForDecode[5:3]};
         DecoderOut[7:4] = 4'b0011;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[2:0]};
-    end 
+    end
 
     10'b00010?????: begin		// ASR1
         DecoderOut[31:28] = 4'b1110;
@@ -384,7 +385,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:7] = HalfWordForDecode[10:6];
         DecoderOut[6:4] = 3'b100;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[5:3]};
-    end 
+    end
 
     10'b0100000100: begin		// ASR2
         DecoderOut[31:28] = 4'b1110;
@@ -394,7 +395,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:8] = {1'b0, HalfWordForDecode[5:3]};
         DecoderOut[7:4] = 4'b0101;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[2:0]};
-    end 
+    end
 
     10'b0100000111: begin		// ROR
         DecoderOut[31:28] = 4'b1110;
@@ -403,7 +404,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:8] = {1'b0, HalfWordForDecode[5:3]};
         DecoderOut[7:4] = 4'b0111;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[2:0]};
-    end 
+    end
 
     // Branch Instructions
     10'b1101??????: begin		// B1 & SWI
@@ -418,7 +419,7 @@ always @(HalfWordForDecode) begin
             DecoderOut[23:8] = {16{HalfWordForDecode[7]}};		    // Sign extend
             DecoderOut[7:0] = HalfWordForDecode[7:0];
         end
-    end 
+    end
 
     10'b11100?????: begin		// B2
         DecoderOut[31:28] = 4'b1110;
@@ -433,7 +434,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:24] = 4'b1011;
         DecoderOut[23:0] = {{2{HalfWordForDecode[10]}}, HalfWordForDecode[10:0], 11'b0};
-    end 
+    end
 
     10'b111?1?????: begin       // BLH
         // reg [21:0] full_offset;
@@ -454,13 +455,13 @@ always @(HalfWordForDecode) begin
         DecoderOut[7:4] = 4'b0001;
         DecoderOut[3] = HalfWordForDecode[6];
         DecoderOut[2:0] = HalfWordForDecode[5:3];
-    end 
+    end
 
     // Load
     10'b11001?????: begin		// LDMIA
         DecoderOut[31:28] = 4'b1110;
         DecoderOut[27:22] = 6'b100010;
-        
+
         //DecoderOut(21) = '0' when HalfWordForDecode(HalfWordForDecode(10 downto 8))='1'
         //                      else '1';
         // Send help, I am lost
@@ -469,7 +470,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[19:16] = {1'b0, HalfWordForDecode[10:8]};
         DecoderOut[15:8] = 8'b00000000;
         DecoderOut[7:0] = HalfWordForDecode[7:0];
-    end 
+    end
 
     10'b01101?????: begin		// LDR1
         DecoderOut[31:28] = 4'b1110;
@@ -479,7 +480,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:7] = 5'b00000;
         DecoderOut[6:2] = HalfWordForDecode[10:6];
         DecoderOut[1:0] = 2'b00;
-    end 
+    end
 
     10'b0101100???: begin		// LDR2
         DecoderOut[31:28] = 4'b1110;
@@ -488,7 +489,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
+    end
 
     10'b01001?????: begin		// LDR3  (pc relative load)
         DecoderOut[31:28] = 4'b1110;
@@ -500,7 +501,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[1:0] = 2'b00;
 
         ThADR_Int = 1'b1;      // datasheet 5.6.1
-    end 
+    end
 
     10'b10011?????: begin		// LDR4
         DecoderOut[31:28] = 4'b1110;
@@ -510,7 +511,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:10] = 2'b00;
         DecoderOut[9:2] = HalfWordForDecode[7:0];
         DecoderOut[1:0] = 2'b00;
-    end 
+    end
 
     10'b01111?????: begin		// LDRB1
         DecoderOut[31:28] = 4'b1110;
@@ -519,7 +520,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:5] = 7'b0000000;
         DecoderOut[4:0] = HalfWordForDecode[10:6];
-    end 
+    end
 
     10'b0101110???: begin		// LDRB2
         DecoderOut[31:28] = 4'b1110;
@@ -528,7 +529,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
+    end
 
     10'b10001?????: begin		// LDRH1
         DecoderOut[31:28] = 4'b1110;
@@ -540,7 +541,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[7:4] = 4'b1011;
         DecoderOut[3:1] = HalfWordForDecode[8:6];
         DecoderOut[0] = 1'b0;
-    end 
+    end
 
     10'b0101101???: begin		// LDRH2
         DecoderOut[31:28] = 4'b1110;
@@ -550,7 +551,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:8] = 4'b0000;
         DecoderOut[7:4] = 4'b1011;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
+    end
 
     10'b0101011???: begin		// LDRSB
         DecoderOut[31:28] = 4'b1110;
@@ -560,7 +561,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:8] = 4'b0000;
         DecoderOut[7:4] = 4'b1101;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
+    end
 
     10'b0101111???: begin		// LDRSH
         DecoderOut[31:28] = 4'b1110;
@@ -570,7 +571,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:8] = 4'b0000;
         DecoderOut[7:4] = 4'b1111;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
+    end
 
     // Store Instructions
     10'b11000?????: begin		//STMIA
@@ -579,7 +580,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[19:16] = {1'b0, HalfWordForDecode[10:8]};
         DecoderOut[15:8] = 8'b00000000;
         DecoderOut[7:0] = HalfWordForDecode[7:0];
-    end 
+    end
 
     10'b01100?????: begin		// STR1
         DecoderOut[31:28] = 4'b1110;
@@ -589,7 +590,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:7] = 5'b00000;
         DecoderOut[6:2] = HalfWordForDecode[10:6];
         DecoderOut[1:0] = 2'b00;
-    end 
+    end
 
     10'b0101000???: begin		// STR2
         DecoderOut[31:28] = 4'b1110;
@@ -598,7 +599,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
+    end
 
     10'b10010?????: begin		// STR3
         DecoderOut[31:28] = 4'b1110;
@@ -608,7 +609,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:10] = 2'b00;
         DecoderOut[9:2] = HalfWordForDecode[7:0];
         DecoderOut[1:0] = 2'b00;
-    end 
+    end
 
     10'b01110?????: begin		// STRB1
         DecoderOut[31:28] = 4'b1110;
@@ -617,7 +618,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:5] = 7'b0000000;
         DecoderOut[4:0] = HalfWordForDecode[10:6];
-    end 
+    end
 
     10'b0101010???: begin		// STRB2
         DecoderOut[31:28] = 4'b1110;
@@ -626,7 +627,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15:12] = {1'b0, HalfWordForDecode[2:0]};
         DecoderOut[11:4] = 8'b00000000;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
+    end
 
     10'b10000?????: begin		// STRH1
         DecoderOut[31:28] = 4'b1110;
@@ -638,7 +639,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[7:4] = 4'b1011;
         DecoderOut[3:1] = HalfWordForDecode[8:6];
         DecoderOut[0] = 1'b0;
-    end 
+    end
 
     10'b0101001???: begin		// STRH2
         DecoderOut[31:28] = 4'b1110;
@@ -648,7 +649,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[11:8] = 4'b0000;
         DecoderOut[7:4] = 4'b1011;
         DecoderOut[3:0] = {1'b0, HalfWordForDecode[8:6]};
-    end 
+    end
 
     // Other
     10'b1011110???: begin		// Pop
@@ -658,7 +659,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[15] = HalfWordForDecode[8];
         DecoderOut[14:8] = 7'b0000000;
         DecoderOut[7:0] = HalfWordForDecode[7:0];
-    end 
+    end
 
     10'b1011010???: begin		// PUSH
         DecoderOut[31:28] = 4'b1110;
@@ -668,7 +669,7 @@ always @(HalfWordForDecode) begin
         DecoderOut[14] = HalfWordForDecode[8];
         DecoderOut[13:8] = 6'b000000;
         DecoderOut[7:0] = HalfWordForDecode[7:0];
-    end 
+    end
 
     default: DecoderOut = {32{1'bX}};
     endcase
@@ -676,4 +677,3 @@ end
 
 
 endmodule
-

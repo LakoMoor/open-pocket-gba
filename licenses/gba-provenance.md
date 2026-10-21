@@ -16,6 +16,7 @@ GBATang's GPL-licensed distribution with its original author notice intact.
 
 Modification on 2026-10-21: `gba_cpu.v` fixes the upper byte slice in an odd-address
 LDRH rotation, changing `[23:15]` to `[23:16]`. The original ROM tests this path.
+Whitespace is normalized in both imported files; author notices are preserved.
 Other GBA modules and the diagnostic program are new GPL-3.0-or-later code.
 
 MiSTer GBA, Cult-of-GBA BIOS, mGBA suite and gba-tests were inspected but are not
