@@ -1,0 +1,127 @@
+package io.github.lakomoor.openpocket
+
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.hardware.usb.UsbManager
+import android.os.Build
+import com.hoho.android.usbserial.driver.UsbSerialPort
+import com.hoho.android.usbserial.driver.UsbSerialProber
+import com.hoho.android.usbserial.util.SerialInputOutputManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.Executors
+
+/**
+ * The board over USB OTG: the Tang Nano 20K debugger is an FT2232-compatible chip; its second
+ * port is the FPGA's UART (115200 8N1). One character per button event (upper case = press),
+ * and Select in the menu makes the firmware print the LCD and HDMI menu text buffers.
+ */
+object Board : SerialInputOutputManager.Listener {
+    const val VID = 0x0403
+    const val PID = 0x6010
+    private const val ACTION_PERMISSION = "io.github.lakomoor.openpocket.USB_PERMISSION"
+
+    enum class State { NoDevice, NeedsPermission, Connected, Error }
+
+    private val _state = MutableStateFlow(State.NoDevice)
+    val state = _state.asStateFlow()
+    private val _log = MutableStateFlow("")
+    val log = _log.asStateFlow()
+
+    private var port: UsbSerialPort? = null
+    private var io: SerialInputOutputManager? = null
+    private val rx = StringBuilder()
+    @Volatile private var dump: ((String) -> Unit)? = null
+    private val writer = Executors.newSingleThreadExecutor()
+
+    fun connect(ctx: Context): State {
+        if (port != null) return State.Connected.also { _state.value = it }
+        val mgr = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
+        val driver = UsbSerialProber.getDefaultProber().findAllDrivers(mgr)
+            .firstOrNull { it.device.vendorId == VID && it.device.productId == PID }
+            ?: return State.NoDevice.also { _state.value = it }
+        if (!mgr.hasPermission(driver.device)) {
+            val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
+            val pi = PendingIntent.getBroadcast(ctx, 0, Intent(ACTION_PERMISSION).setPackage(ctx.packageName), flags)
+            mgr.requestPermission(driver.device, pi)
+            return State.NeedsPermission.also { _state.value = it }
+        }
+        return try {
+            val conn = mgr.openDevice(driver.device)
+            val p = driver.ports.getOrElse(1) { driver.ports[0] }      // port B is the UART
+            p.open(conn)
+            p.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+            port = p
+            io = SerialInputOutputManager(p, this).also { it.start() }
+            appendLog("connected\n")
+            State.Connected
+        } catch (e: Exception) {
+            appendLog("USB: ${e.message}\n")
+            State.Error
+        }.also { _state.value = it }
+    }
+
+    fun disconnect() {
+        io?.stop(); io = null
+        try { port?.close() } catch (_: Exception) {}
+        port = null
+        _state.value = State.NoDevice
+    }
+
+    private fun write(s: String) {
+        val p = port ?: return
+        writer.execute { try { p.write(s.toByteArray(), 200) } catch (e: Exception) { appendLog("USB: ${e.message}\n"); disconnect() } }
+    }
+
+    fun press(k: Char, down: Boolean) = write(if (down) k.uppercase() else k.lowercase())
+    fun tap(k: Char) { write(k.uppercase()); writer.execute { Thread.sleep(100) }; write(k.lowercase()) }
+
+    /** LCD (12 rows of 16 cells) and HDMI (24 rows of 42) as hex rows, or null when no menu is open. */
+    fun menuShot(): Pair<List<String>, List<String>>? {
+        if (port == null) return null
+        val lock = Object()
+        var text: String? = null
+        synchronized(rx) { rx.setLength(0) }
+        dump = { t -> synchronized(lock) { text = t; lock.notifyAll() } }
+        tap('S')
+        synchronized(lock) { if (text == null) lock.wait(2500) }
+        dump = null
+        val t = text ?: return null
+        if (!t.contains("LCD-BEGIN")) return null
+        fun grab(a: String, b: String, w: Int) = t.substringAfter(a).substringBefore(b)
+            .split('\n').map { it.trim() }.filter { it.length == w * 4 }
+        return grab("LCD-BEGIN", "LCD-END", 16) to grab("OSD-BEGIN", "OSD-END", 42)
+    }
+
+    override fun onNewData(data: ByteArray) {
+        val s = String(data, Charsets.ISO_8859_1)
+        synchronized(rx) {
+            rx.append(s)
+            val d = dump
+            if (d != null) {
+                if (rx.contains("OSD-END")) { val t = rx.toString(); rx.setLength(0); d(t) }
+                return
+            }
+            val i = rx.lastIndexOf("\n")
+            if (i < 0) return
+            val text = rx.substring(0, i + 1)
+            rx.delete(0, i + 1)
+            val keep = text.split('\n').map { it.trimEnd('\r') }.filter { l ->
+                l.isNotEmpty() && !l.startsWith("LCD-") && !l.startsWith("OSD-") &&
+                    !((l.length == 64 || l.length == 84) && l.all { it in "0123456789abcdef" })
+            }
+            if (keep.isNotEmpty()) appendLog(keep.joinToString("\n") + "\n")
+        }
+    }
+
+    override fun onRunError(e: Exception) {
+        appendLog("USB: ${e.message}\n")
+        disconnect()
+    }
+
+    fun appendLog(s: String) {
+        val t = _log.value + s
+        _log.value = if (t.length > 40000) t.takeLast(30000) else t
+    }
+}

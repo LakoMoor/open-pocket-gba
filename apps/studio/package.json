@@ -1,0 +1,25 @@
+{
+  "name": "open-pocket-studio",
+  "productName": "Open Pocket Studio",
+  "version": "1.1.0",
+  "description": "Install firmware and bitstream, prepare SD updates and remote-control Open Pocket GBC",
+  "main": "main.js",
+  "author": "LakoMoor",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "io.github.lakomoor.openpocket.studio",
+    "files": ["main.js", "preload.js", "renderer/**", "assets/**"],
+    "win": { "target": "portable", "artifactName": "OpenPocketStudio-${version}.exe" }
+  },
+  "dependencies": {
+    "serialport": "^12.0.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

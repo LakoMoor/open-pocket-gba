@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<title>Open Pocket Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="logo">Open Pocket <span>Studio</span></div>
+  <nav>
+    <button class="tab on" data-tab="install">Install</button>
+    <button class="tab" data-tab="sd">SD card</button>
+    <button class="tab" data-tab="remote">Remote</button>
+    <button class="tab" data-tab="log">Log</button>
+  </nav>
+  <div class="badge"><div class="dot" id="dot"></div><span id="status">looking for the board…</span></div>
+</header>
+
+<main>
+  <!-- install over USB -->
+  <section class="page on" id="p-install">
+    <div class="col">
+      <h1>Install over USB</h1>
+      <p class="sub">Writes to the board's flash with openFPGALoader. The board restarts on its own.</p>
+      <div class="seg" id="src">
+        <button class="on" data-src="release">Latest release</button>
+        <button data-src="build">This checkout</button>
+        <button data-src="file">Files…</button>
+      </div>
+      <div class="list" id="ilist"></div>
+      <div class="progress" id="prog">
+        <div class="steps" id="steps"></div>
+        <div class="bar"><i id="bar"></i></div>
+        <div class="ptext"><span id="phase">Starting</span><span id="pct">0%</span></div>
+      </div>
+      <div class="msg" id="msg"></div>
+    </div>
+    <aside class="col side">
+      <div class="art"><div class="device"><div class="screen-art"><b>OPEN</b><b class="big">POCKET</b></div></div></div>
+      <p class="hint">USB cable to the Tang Nano 20K. If writing stops with "bulk write failed", replug the cable and try again: a failed write can always be repeated, the board is never bricked.</p>
+    </aside>
+  </section>
+
+  <!-- SD card update -->
+  <section class="page" id="p-sd">
+    <div class="col">
+      <h1>Update from an SD card</h1>
+      <p class="sub">Puts opgbc_fw.bin and opgbc_fpga.bin on the card. On the board: Menu › System › System Update.</p>
+      <div class="seg" id="sdsrc">
+        <button class="on" data-src="release">Latest release</button>
+        <button data-src="build">This checkout</button>
+      </div>
+      <div class="list" id="drives"></div>
+      <div class="msg" id="sdmsg"></div>
+      <ol class="howto">
+        <li>Pick the card above; the files go to its root.</li>
+        <li>Put the card in the board and open the menu.</li>
+        <li>System › System Update › Install Firmware or Install Bitstream.</li>
+        <li>Firmware restarts the menu; after the bitstream switch the power off and on.</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- remote -->
+  <section class="page" id="p-remote">
+    <div class="col wide">
+      <h1>Remote</h1>
+      <p class="sub">Buttons over the USB serial port. Keyboard: arrows, X = A, Z = B, Enter = Start, Backspace = Select, M = menu.</p>
+      <div class="screens">
+        <canvas class="scr" id="lcd" width="128" height="128"></canvas>
+        <canvas class="scr" id="osd" width="336" height="240"></canvas>
+      </div>
+      <div class="row">
+        <button class="item small" id="shot">Show the menu</button>
+        <label class="hint"><input type="checkbox" id="auto"> refresh every 2 s while the menu is open</label>
+      </div>
+      <div class="gb">
+        <div class="dpad">
+          <span></span><button class="k" data-k="U">▲</button><span></span>
+          <button class="k" data-k="L">◀</button><span class="hub"></span><button class="k" data-k="R">▶</button>
+          <span></span><button class="k" data-k="D">▼</button><span></span>
+        </div>
+        <div class="mid">
+          <button class="k pill" data-k="S">SELECT</button>
+          <button class="k pill menu" data-k="M">MENU</button>
+          <button class="k pill" data-k="T">START</button>
+        </div>
+        <div class="ab"><button class="k round" data-k="B">B</button><button class="k round" data-k="A">A</button></div>
+      </div>
+      <div class="row center"><button class="k pill" data-k="X">RESET GAME</button></div>
+    </div>
+  </section>
+
+  <section class="page" id="p-log">
+    <div class="col wide">
+      <h1>Log</h1>
+      <p class="sub">The board's firmware log and openFPGALoader output.</p>
+      <pre class="log" id="log"></pre>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

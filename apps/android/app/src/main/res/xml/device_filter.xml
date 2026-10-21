@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tang Nano 20K debugger (BL616, FT2232-compatible) -->
+    <usb-device vendor-id="1027" product-id="24592" />
+</resources>
