@@ -25,6 +25,7 @@
     }
   },
   "dependencies": {
+    "monaco-editor": "^0.52.2",
     "serialport": "^12.0.0"
   },
   "devDependencies": {

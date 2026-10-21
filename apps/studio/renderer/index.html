@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:">
 <title>Open Pocket Studio</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -14,6 +14,7 @@
     <button class="tab" data-tab="sd">SD card</button>
     <button class="tab" data-tab="remote">Remote</button>
     <button class="tab" data-tab="log">Log</button>
+    <button class="tab" data-tab="ide">IDE</button>
   </nav>
   <div class="badge"><div class="dot" id="dot"></div><span id="status">looking for the board…</span></div>
 </div></header>
@@ -93,6 +94,32 @@
     </div>
   </section>
 
+  <section class="page ide" id="p-ide">
+    <div class="ide-files" id="files"></div>
+    <div class="ide-edit">
+      <div class="ide-bar">
+        <span id="fname" class="hint">no file</span>
+        <span class="grow"></span>
+        <button class="item small" id="save">Save</button>
+        <button class="item small primary" id="build">Build</button>
+        <button class="item small" id="run">Run</button>
+        <button class="item small" id="flashfw">Flash to board</button>
+      </div>
+      <div id="editor"></div>
+      <pre class="ide-out" id="buildlog"></pre>
+    </div>
+    <div class="ide-sim">
+      <div class="ide-bar"><span class="hint" id="simstate">simulator stopped</span><span class="grow"></span>
+        <button class="item small" id="simreset">Reset</button><button class="item small" id="simsd">SD files</button></div>
+      <canvas id="simhdmi" width="672" height="480" tabindex="0"></canvas>
+      <div class="row" style="margin:12px 0;align-items:flex-start">
+        <canvas id="simlcd" width="128" height="128" tabindex="0"></canvas>
+        <div class="hint" style="line-height:1.6">Click a screen, then:<br>arrows · X = A · Z = B<br>Enter = Start · Backspace = Select<br>Esc = Menu (S1) · R = Reset (S2)</div>
+      </div>
+      <pre class="ide-out" id="simlog"></pre>
+    </div>
+  </section>
+
   <section class="page" id="p-log">
     <div class="col wide">
       <h1>Log</h1>
@@ -101,6 +128,12 @@
     </div>
   </section>
 </main>
+  <!-- IDE: the firmware sources, a build, and the board simulated around the real fw.bin -->
 <script src="app.js"></script>
+<script src="../sim/cpu.js"></script>
+<script src="../sim/board.js"></script>
+<script src="../sim/sim.js"></script>
+<script src="../node_modules/monaco-editor/min/vs/loader.js"></script>
+<script src="ide.js"></script>
 </body>
 </html>

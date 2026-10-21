@@ -274,6 +274,84 @@ ipcMain.handle('font', () => {
 });
 ipcMain.handle('open', (_, url) => shell.openExternal(url));
 
+// ---------------------------------------------------------------- IDE and simulator
+const SIMDIR = path.join(app.getPath('userData'), 'sim');
+const SRC_DIRS = [path.join(ROOT, 'fw', 'src'), path.join(ROOT, 'fw', 'home')];
+const SD_DIR_DEFAULT = path.join(ROOT, 'games');
+let buildProc = null;
+
+function listSources() {
+  const out = [];
+  for (const d of SRC_DIRS) if (fs.existsSync(d))
+    for (const f of fs.readdirSync(d).sort())
+      if (/\.(c|h|S|asm|py|ld|sh)$/.test(f)) out.push({ path: path.join(d, f), name: path.relative(path.join(ROOT, 'fw'), path.join(d, f)).split(path.sep).join('/') });
+  return out;
+}
+function insideSources(p) { return SRC_DIRS.some(d => path.resolve(p).startsWith(d + path.sep)); }
+
+// the flash image of the simulated board: firmware at 0x100000, games at 0x200000, the rest kept
+function simFlash(freshFw) {
+  fs.mkdirSync(SIMDIR, { recursive: true });
+  const file = path.join(SIMDIR, 'flash.bin');
+  let img;
+  if (fs.existsSync(file)) img = new Uint8Array(fs.readFileSync(file));
+  else {
+    img = new Uint8Array(8 << 20).fill(0xff);
+    if (fs.existsSync(BUILD.games)) img.set(fs.readFileSync(BUILD.games), 0x200000);
+    freshFw = true;
+  }
+  if (freshFw && fs.existsSync(BUILD.firmware)) { img.fill(0xff, 0x100000, 0x200000); img.set(fs.readFileSync(BUILD.firmware), 0x100000); }
+  return img;
+}
+function simSd(rebuild) {
+  const file = path.join(SIMDIR, 'sd.img');
+  if (!rebuild && fs.existsSync(file)) return new Uint8Array(fs.readFileSync(file));
+  const { buildImage } = require('./sim/fat');
+  const tmp = path.join(SIMDIR, 'sd_src');
+  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.mkdirSync(tmp, { recursive: true });
+  if (fs.existsSync(SD_DIR_DEFAULT)) for (const f of fs.readdirSync(SD_DIR_DEFAULT)) fs.copyFileSync(path.join(SD_DIR_DEFAULT, f), path.join(tmp, f));
+  if (fs.existsSync(BUILD.firmware)) fs.copyFileSync(BUILD.firmware, path.join(tmp, 'opgbc_fw.bin'));     // lets you try System Update
+  const img = buildImage(tmp, 32);
+  fs.writeFileSync(file, img);
+  return img;
+}
+
+ipcMain.handle('ide-files', () => listSources());
+ipcMain.handle('ide-read', (_, p) => insideSources(p) ? fs.readFileSync(p, 'utf8') : null);
+ipcMain.handle('ide-write', (_, p, text) => { if (!insideSources(p)) return false; fs.writeFileSync(p, text.replace(/\r\n/g, '\n')); return true; });
+ipcMain.handle('ide-build', () => new Promise(resolve => {
+  if (buildProc) return resolve(-1);
+  const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
+  buildProc = spawn(bash, [path.join(ROOT, 'fw', 'build.sh')], { cwd: path.join(ROOT, 'fw'), windowsHide: true });
+  const fwd = d => send('build-log', d.toString());
+  buildProc.stdout.on('data', fwd);
+  buildProc.stderr.on('data', fwd);
+  buildProc.on('error', e => { send('build-log', e.message + '\n'); buildProc = null; resolve(-1); });
+  buildProc.on('close', code => { buildProc = null; resolve(code); });
+}));
+ipcMain.handle('sim-load', (_, opts) => ({ flash: simFlash(opts && opts.freshFw), sd: simSd(opts && opts.rebuildSd) }));
+ipcMain.handle('sim-save', (_, flash, sd) => {
+  fs.mkdirSync(SIMDIR, { recursive: true });
+  if (flash) fs.writeFileSync(path.join(SIMDIR, 'flash.bin'), flash);
+  if (sd) fs.writeFileSync(path.join(SIMDIR, 'sd.img'), sd);
+  return true;
+});
+ipcMain.handle('sim-reset-flash', () => { fs.rmSync(path.join(SIMDIR, 'flash.bin'), { force: true }); return true; });
+ipcMain.handle('sim-sd-open', (_, sd) => {
+  const { readImage } = require('./sim/fat');
+  const out = path.join(SIMDIR, 'sd_files');
+  fs.rmSync(out, { recursive: true, force: true });
+  for (const [name, data] of Object.entries(readImage(sd))) {
+    const p = path.join(out, name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, data);
+  }
+  shell.openPath(out);
+  return out;
+});
+
+
 app.whenReady().then(() => {
   win = new BrowserWindow({
     width: 1180, height: 860, minWidth: 720, minHeight: 600, backgroundColor: '#0d0f17',

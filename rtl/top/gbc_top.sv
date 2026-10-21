@@ -6,13 +6,15 @@ module gbc_top (
     input             sys_clk,      // 27 MHz
     input             s1,           // menu
     input             s2,           // reset game
-    output      [1:0] led,
+    inout       [1:0] led,          // board LEDs, or I2C (SCL, SDA) to the carrier's IP5306
+    input             chg,          // carrier: USB power present (pin 86, pulled down)
 
     output            tmds_clk_p, tmds_clk_n,
     output      [2:0] tmds_d_p,   tmds_d_n,
 
     // GPIO buttons to GND (internal pull-ups): up, down, left, right, A, B, select, start
     input       [7:0] key_n,
+    input             key_menu_n,   // Menu button of the carrier board (pin 54, pulled up): like S1
 
     // ST7735S SPI LCD
     output            lcd_scl,
@@ -143,10 +145,10 @@ end
 wire [11:0] pad_gpio = {3'b000, key_q[4], key_q[3], key_q[2], key_q[1], key_q[0], key_q[7], key_q[6], 1'b0, key_q[5]};
 // remote control over the USB-UART
 wire [11:0] pad_uart;
-wire        uart_menu, uart_reset;
+wire        uart_menu, uart_reset, uart_seen;
 uart_pad #(.CLK_HZ(33_750_000)) u_uart_pad (
     .clk(clk_sys), .reset(sys_rst), .rx(uart_rx),
-    .pad(pad_uart), .key_menu(uart_menu), .key_reset(uart_reset)
+    .pad(pad_uart), .key_menu(uart_menu), .key_reset(uart_reset), .rx_seen(uart_seen)
 );
 wire [11:0] pad_ok   = pad_ds | pad_gpio | pad_uart;
 
@@ -182,7 +184,7 @@ always @(posedge clk_sys) begin
 end
 wire [11:0] pad_arm = armed ? pad_ok : 12'd0;
 reg  [1:0] s1_s, s2_s;
-always @(posedge clk_sys) begin s1_s <= {s1_s[0], s1}; s2_s <= {s2_s[0], s2}; end
+always @(posedge clk_sys) begin s1_s <= {s1_s[0], s1 | ~key_menu_n}; s2_s <= {s2_s[0], s2}; end
 
 iosys #(.CLK_HZ(33_750_000)) u_io (
     .clk(clk_sys), .reset(sys_rst), .sdram_ready(sdram_ready),
@@ -192,9 +194,10 @@ iosys #(.CLK_HZ(33_750_000)) u_io (
     .sd_cs_n(sd_dat3), .sd_clk(sd_clk), .sd_mosi(sd_cmd), .sd_miso(sd_dat0),
     .cart_cs_n(cart_cs_n), .cart_clk(cart_clk), .cart_mosi(cart_mosi), .cart_miso(cart_miso),
     .uart_tx(uart_tx),
-    .link_sc(link_sc), .link_si(link_si), .prn_so(prn_so),
+    .link_sc(prn_sc_in), .link_si(prn_si_in), .prn_so(prn_so),
     .inputs({uart_reset, uart_menu, s2_s[1], s1_s[1], pad_arm}),
-    .frame_tick(lcd_vs_rise), .stat_gbc(isGBC), .stat_2x(speed), .stat_buf(rd_buf), .cram_wr(cram_wr & ~gb_reset),
+    .frame_tick(lcd_vs_rise), .stat_gbc(isGBC), .stat_2x(speed), .stat_buf(rd_buf),
+    .uart_seen(uart_seen), .gpio_in({chg, led[1], led[0]}), .gpio_out(gpio_out), .cram_wr(cram_wr & ~gb_reset),
     .ctrl(ctrl), .cfg(cfg), .beep(beep),
     .ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
     .osd_we(osd_we), .osd_addr(osd_waddr), .osd_data(osd_wdata),
@@ -210,6 +213,7 @@ assign ws2812  = 1'b0;
 //       [8] SPI LCD off  [9] LEDs on  [10] SDRAM power-down  [11] LCD half rate
 //       [12] fast forward  [13] framebuffer writes even with HDMI off (screenshots)  [14] link port on
 //       [15] link port is a Game Boy Printer (the menu CPU answers, the core is disconnected)
+//       [16] virtual printer: the core's serial port talks to the printer shifter inside the FPGA
 wire       core_rst   = ctrl[0];
 wire       core_pause = ctrl[1];
 wire       loading    = ctrl[2];
@@ -225,6 +229,7 @@ wire       fast_fwd   = ctrl[12];
 wire       fb_force   = ctrl[13];
 wire       link_en    = ctrl[14];
 wire       prn_mode   = ctrl[15];
+wire       prn_virt   = ctrl[16];
 wire       prn_so;
 wire [31:0] beep;
 wire       sdram_sleep;
@@ -449,9 +454,12 @@ always @(posedge clk_p) txt_q <= txt_ram[txt_raddr];
 wire       ser_int, ser_clk_out, ser_dout;
 reg  [1:0] lk_sc_s = 2'b11, lk_si_s = 2'b11;
 always @(posedge clk_sys) begin lk_sc_s <= {lk_sc_s[0], link_sc}; lk_si_s <= {lk_si_s[0], link_si}; end
-wire       core_link  = link_en & ~prn_mode;
+wire       core_link  = link_en & ~prn_mode & ~prn_virt;
 wire       ser_clk_in = core_link ? lk_sc_s[1] : 1'b1;
-wire       ser_din    = core_link ? lk_si_s[1] : 1'b1;
+wire       ser_din    = prn_virt ? prn_so : core_link ? lk_si_s[1] : 1'b1;
+// the printer shifter listens to the link pins, or to the core itself (virtual printer)
+wire       prn_sc_in  = prn_virt ? (ser_int ? ser_clk_out : 1'b1) : link_sc;
+wire       prn_si_in  = prn_virt ? ser_dout : link_si;
 assign link_sc = (core_link & ser_int) ? ser_clk_out : 1'bz;
 assign link_so = prn_mode ? prn_so : core_link ? ser_dout : 1'b1;
 
@@ -608,6 +616,10 @@ hdmi #(
 // tri-stated while HDMI is off, so no current flows into the sink's termination
 TLVDS_TBUF u_obuf [3:0] (.I({tmds_clock, tmds}), .OEN({4{hdmi_off}}), .O({tmds_clk_p, tmds_d_p}), .OB({tmds_clk_n, tmds_d_n}));
 
-assign led = ~({menu_open & menu_dim, loading} & {2{led_en}});
+wire [2:0] gpio_out;
+wire [1:0] led_v = ~({menu_open & menu_dim, loading} & {2{led_en}});
+// with I2C on, both pins are open drain (the carrier has the pull-ups)
+assign led[0] = gpio_out[2] ? (gpio_out[0] ? 1'b0 : 1'bz) : led_v[0];
+assign led[1] = gpio_out[2] ? (gpio_out[1] ? 1'b0 : 1'bz) : led_v[1];
 
 endmodule

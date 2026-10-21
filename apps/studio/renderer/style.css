@@ -95,3 +95,20 @@ label.hint input { accent-color: #fff; }
 .ab { display: flex; gap: 18px; justify-content: flex-end; transform: rotate(-18deg); }
 .round { width: 68px; height: 68px; border-radius: 50%; font-size: 17px; }
 pre.log { height: calc(100vh - 300px); min-height: 260px; overflow: auto; background: var(--graphite); border-radius: 10px; padding: 20px; margin: 0; font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--ash); white-space: pre-wrap; letter-spacing: 0; }
+
+/* IDE: files | editor | simulator */
+.page.ide.on { display: grid; grid-template-columns: 180px minmax(0, 1fr) 560px; gap: 20px; max-width: none; padding: 20px 24px; height: calc(100vh - 80px); }
+.ide-files { overflow: auto; font-size: 13px; }
+.ide-files div { padding: 6px 12px; border-radius: 100px; cursor: pointer; color: var(--pewter); white-space: nowrap; }
+.ide-files div:hover { color: var(--paper); }
+.ide-files div.on { background: var(--paper); color: var(--ink); }
+.ide-edit, .ide-sim { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.ide-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.ide-bar .grow { flex: 1; }
+.ide-bar .item.small { padding: 7px 14px; }
+#editor { flex: 1; min-height: 200px; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px var(--hair); }
+.ide-out { height: 150px; overflow: auto; background: var(--graphite); border-radius: 10px; padding: 12px; margin: 10px 0 0; font: 11px/1.45 ui-monospace, Consolas, monospace; color: var(--ash); white-space: pre-wrap; letter-spacing: 0; }
+.ide-sim .ide-out { flex: 1; height: auto; }
+#simhdmi { width: 560px; height: 400px; background: #000; border-radius: 10px; image-rendering: pixelated; outline: none; box-shadow: 0 0 0 1px var(--hair); }
+#simlcd { width: 192px; height: 192px; background: #000; border-radius: 8px; image-rendering: pixelated; outline: none; box-shadow: 0 0 0 1px var(--hair); }
+#simhdmi:focus, #simlcd:focus { box-shadow: 0 0 0 2px var(--paper); }

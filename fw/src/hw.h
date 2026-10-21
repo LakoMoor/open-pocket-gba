@@ -7,7 +7,8 @@
 #define REG_ID      IO(0x00)
 #define REG_IN      IO(0x04)   // inputs, see K_*
 #define REG_MS      IO(0x08)   // milliseconds since start
-#define REG_STAT    IO(0x0C)   // [0] GBC mode [1] double speed [2] cart RAM written (clears) [4:3] newest framebuffer [31:16] frames
+#define REG_STAT    IO(0x0C)   // [0] GBC mode [1] double speed [2] cart RAM written (clears) [4:3] newest framebuffer
+                               // [5] a byte came over the USB-UART (clears) [31:16] frames
 #define SD_DATA     IO(0x10)   // write: send byte; read: last received byte
 #define SD_WORD     IO(0x14)   // read: receive 4 bytes (little endian)
 #define SD_CTRL     IO(0x18)   // [0] CS  [15:8] SCK half period - 1
@@ -24,6 +25,7 @@
 #define IOCTL_ADDR  IO(0x40)
 #define IOCTL_DATA  IO(0x44)
 #define REG_DEEPWAIT IO(0x48)  // like REG_WAIT, and the SDRAM self-refreshes meanwhile (core paused)
+#define REG_GPIO    IO(0x64)   // write: [0] SCL low [1] SDA low [2] I2C on (pins 15/16); read: [0] SCL [1] SDA [2] USB power
 #define REG_PRN     IO(0x60)   // printer: read [8] byte ready [7:0] byte (clears); write: answer two bytes on
 #define REG_BEEP    IO(0x4C)   // menu sound: [11:0] half period in 4 us steps, [27:16] ms; a change starts it
 
@@ -65,6 +67,7 @@
 #define C_FB_FORCE  (1u << 13)  // framebuffer writes with HDMI off (screenshots)
 #define C_LINK      (1u << 14)  // link port pins active
 #define C_PRINTER   (1u << 15)  // link port is a Game Boy Printer (REG_PRN), the core is cut off
+#define C_PRN_VIRT  (1u << 16)  // virtual printer: the core's serial port talks to REG_PRN
 
 // SDRAM layout (byte addresses, the CPU sees SDRAM at 0)
 #define ROM_BASE    0x000000u

@@ -32,7 +32,7 @@ typedef struct {
     uint8_t  spk_mode, theme, sdram_pd, lcd_slow;      // theme: TH_*
     uint8_t  dim_idx, poll_slow, menu_snd, link_en;    // LCD auto-dim: off / 15 / 30 / 60 s
     char     last_path[216];
-    uint8_t  home_scene, rsv2[15];
+    uint8_t  home_scene, vprinter, rsv2[14];
     uint32_t sum;
 } settings_t;
 
@@ -108,10 +108,11 @@ static void apply_settings(void) {
               (duty << 8) | ((uint32_t)(set.volume & 7) << 12) |
               ((uint32_t)(set.swap_ab & 1) << 15) | ((uint32_t)(set.speaker & 1) << 16) |
               ((uint32_t)(set.spk_boost & 3) << 17) | ((uint32_t)(set.spk_mode & 1) << 19);
-    ctrl &= ~((3u << C_SYS_SHIFT) | C_HDMI_OFF | C_LCD_OFF | C_LED | C_SDRAM_PD | C_LCD_SLOW | C_LINK);
+    ctrl &= ~((3u << C_SYS_SHIFT) | C_HDMI_OFF | C_LCD_OFF | C_LED | C_SDRAM_PD | C_LCD_SLOW | C_LINK | C_PRN_VIRT);
     ctrl |= ((uint32_t)set.sys_mode << C_SYS_SHIFT) | (set.hdmi_off ? C_HDMI_OFF : 0) |
             (set.lcd_off ? C_LCD_OFF : 0) | (set.led_en ? C_LED : 0) |
-            (set.sdram_pd ? C_SDRAM_PD : 0) | (set.lcd_slow ? C_LCD_SLOW : 0) | (set.link_en ? C_LINK : 0);
+            (set.sdram_pd ? C_SDRAM_PD : 0) | (set.lcd_slow ? C_LCD_SLOW : 0) | (set.link_en ? C_LINK : 0) |
+            (set.vprinter ? C_PRN_VIRT : 0);
     ctrl_write();
 }
 
@@ -180,6 +181,8 @@ static struct {
     uint32_t dirty_ms, saved_ms;
     int      saved_once;
 } game;
+
+static uint32_t stat_read(void);          // REG_STAT without losing its sticky bits
 
 static const char *mapper_name(uint8_t t) {
     switch (t) {
@@ -632,16 +635,16 @@ static int screenshot(char *saved_as, int n) {
         uint32_t keep = ctrl;
         ctrl = (ctrl | C_FB_FORCE) & ~C_PAUSE;
         ctrl_write();
-        uint16_t f0 = (uint16_t)(REG_STAT >> 16);
+        uint16_t f0 = (uint16_t)(stat_read() >> 16);
         uint32_t t0 = ms_now();
-        while ((uint16_t)((REG_STAT >> 16) - f0) < 3 && ms_now() - t0 < 300) ;
+        while ((uint16_t)((stat_read() >> 16) - f0) < 3 && ms_now() - t0 < 300) ;
         ctrl = keep | C_FB_FORCE;
         ctrl_write();
         wait_ms(20);
         ctrl = keep;
         ctrl_write();
     }
-    uint32_t st = REG_STAT;
+    uint32_t st = stat_read();
     int gbc = st & 1, buf = (st >> 3) & 3;
     char nm[28], path[80];
     int k = 0;
@@ -930,6 +933,7 @@ static void start_home(void) {
 }
 
 static void wait_release(void);
+static uint32_t poll_keys(uint32_t timeout);
 
 // ================================================================ Game Boy Printer
 // The board is the printer on the link port: the Game Boy clocks the bytes, the RTL shifter
@@ -1105,6 +1109,93 @@ static void prn_screen(const char *state) {
     lcd_present();
 }
 
+
+// ---- virtual printer: the game prints to the shifter inside the FPGA while it runs
+static int prn_last_rows;                 // the last finished page, kept in PRN_PAGE for viewing
+
+static void vprn_reset(void) {
+    memset(&pr, 0, sizeof pr);
+    REG_PRN = 0;
+}
+
+// called from the main loop: answer the bytes, finish a page when the game is done printing
+static void vprn_poll(uint32_t now) {
+    uint32_t v;
+    int got = 0;
+    while ((v = REG_PRN) & 0x100) { prn_byte((uint8_t)v); got = 1; }
+    if (got) { pr.last_ms = now; return; }
+    if (now - pr.last_ms < 500) return;               // a transfer is going on
+    if (pr.page_ready || (pr.page_len && !pr.printing && now - pr.last_ms > 1500)) {
+        uint32_t rows = pr.page_len / ROW_BYTES;
+        pr.page_ready = 0;
+        if (!rows) return;
+        prn_save_bmp(rows);
+        prn_last_rows = (int)rows;
+        pr.page_len = 0;
+        pr.pages++;
+        toast("Printed: Tools > Last Print", G_DISPLAY, CL_GB3);
+    }
+}
+
+// the last page on HDMI through the framebuffer (the game is paused under the menu); the
+// frame of the game is kept and put back. The LCD shows a hint: it only gets the core's picture.
+static void vprn_view(void) {
+    if (!prn_last_rows) { message_screen("Nothing printed yet", "print from a game first"); wait_ms(1500); osd_invalidate(); return; }
+    if (set.hdmi_off) { message_screen("Turn HDMI on to view", "the BMP is in /Prints"); wait_ms(1800); osd_invalidate(); return; }
+    uint32_t st = stat_read();
+    int gbc = st & 1, buf = (st >> 3) & 3;
+    uint32_t fb = 0x700000u + (uint32_t)buf * 0x10000, keep = 0x730000u;
+    volatile uint32_t *f = (volatile uint32_t *)sdram(fb), *k = (volatile uint32_t *)sdram(keep);
+    for (int i = 0; i < 160 * 144 / 2; i++) k[i] = f[i];
+    static const uint8_t g5[4] = { 30, 21, 11, 2 };
+    int lines = prn_last_rows * 8, scroll = 0, maxs = lines > 144 ? lines - 144 : 0;
+    uint32_t saved = ctrl;
+    ctrl &= ~C_DIM;
+    ctrl_write();
+    osd_clear(AT(CL_WHITE, CL_GAME));
+    osd_present();
+    lcd_clear(AT(CL_WHITE, CL_SHADE));
+    lcd_text(0, 4, "Last print", AT(CL_WHITE, CL_SHADE));
+    lcd_text(0, 6, "on the HDMI", AT(CL_LIGHT, CL_SHADE));
+    lcd_text(0, 8, "\x1a\x1b scroll", AT(CL_GREY, CL_SHADE));
+    lcd_text(0, 9, "B back", AT(CL_GREY, CL_SHADE));
+    lcd_present();
+    volatile uint8_t *t = sdram(PRN_PAGE);
+    wait_release();
+    for (int redraw = 1;;) {
+        if (redraw) {
+            for (int y = 0; y < 144; y++) {
+                int sy = y + scroll;
+                for (int x = 0; x < 160; x += 2) {
+                    uint32_t w = 0;
+                    for (int h = 0; h < 2; h++) {
+                        int c = 0;
+                        if (sy < lines) {
+                            uint32_t o = (uint32_t)(sy / 8) * ROW_BYTES + ((x + h) / 8) * 16 + (sy % 8) * 2;
+                            int b = 7 - (x + h) % 8;
+                            c = ((t[o] >> b) & 1) | (((t[o + 1] >> b) & 1) << 1);
+                        }
+                        int sh = (pr.pal >> (2 * c)) & 3;
+                        uint32_t px = gbc ? (uint32_t)(g5[sh] | g5[sh] << 5 | g5[sh] << 10) : (uint32_t)sh;
+                        w |= px << (16 * h);
+                    }
+                    f[(y * 160 + x) >> 1] = w;
+                }
+            }
+            redraw = 0;
+        }
+        uint32_t kk = poll_keys(1000);
+        if (kk & (K_B | K_Y | K_A | K_START)) break;
+        if ((kk & K_DOWN) && scroll < maxs) { scroll = scroll + 8 > maxs ? maxs : scroll + 8; redraw = 1; }
+        if ((kk & K_UP) && scroll > 0) { scroll = scroll < 8 ? 0 : scroll - 8; redraw = 1; }
+    }
+    for (int i = 0; i < 160 * 144 / 2; i++) f[i] = k[i];
+    ctrl = saved;
+    ctrl_write();
+    osd_invalidate();
+    wait_release();
+}
+
 // printer mode until B: the running game or home screen makes room for the viewer
 static void printer_run(void) {
     if (game.loaded && game.save_pending) save_write();
@@ -1114,7 +1205,7 @@ static void printer_run(void) {
     home_running = 0;
     memset(&pr, 0, sizeof pr);
     REG_PRN = 0;
-    ctrl = (ctrl | C_PRINTER | C_OSD | C_DIM | C_CORE_RST) & ~C_PAUSE;   // core stopped until a page arrives
+    ctrl = (ctrl | C_PRINTER | C_OSD | C_DIM | C_CORE_RST) & ~(C_PAUSE | C_PRN_VIRT);   // core stopped until a page arrives
     ctrl_write();
     osd_invalidate();
     prn_screen("Waiting for a print");
@@ -1340,6 +1431,83 @@ static const uint16_t sleep_minutes[4] = { 0, 5, 15, 30 };
 static uint32_t sleep_after_ms(void) { return sleep_minutes[set.sleep_min & 3] * 60000u; }
 static const uint8_t dim_seconds[4] = { 0, 15, 30, 60 };
 
+
+// ================================================================ status icons: battery, USB power, PC remote
+// The carrier board has an IP5306-I2C (address 0x75) on pins 15 (SCL) and 16 (SDA) and a
+// VBUS divider on pin 86. On the bare Tang Nano nothing answers: no battery icon.
+static int bat_level = -1;                // 0..3, -1: no gauge
+static int bat_charging, usb_power;
+static uint32_t bat_ms, remote_ms;
+
+// REG_STAT clears its sticky bits when read: every read goes through here so none is lost
+static uint32_t stat_read(void) {
+    uint32_t st = REG_STAT, now = ms_now();
+    if (st & 4) { game.save_pending = 1; game.dirty_ms = now; }
+    if (st & 0x20) remote_ms = now ? now : 1;
+    return st;
+}
+
+static void i2c_set(int scl, int sda) {   // 1 = released (pulled up), 0 = driven low
+    REG_GPIO = 4 | (scl ? 0 : 1) | (sda ? 0 : 2);
+    for (volatile int i = 0; i < 40; i++) ;
+}
+static int i2c_sda(void) { return (REG_GPIO >> 1) & 1; }
+static void i2c_start(void) { i2c_set(1, 1); i2c_set(1, 0); i2c_set(0, 0); }
+static void i2c_stop(void) { i2c_set(0, 0); i2c_set(1, 0); i2c_set(1, 1); }
+static int i2c_wr(uint8_t b) {             // 1 = ACK
+    for (int i = 7; i >= 0; i--) { int v = (b >> i) & 1; i2c_set(0, v); i2c_set(1, v); i2c_set(0, v); }
+    i2c_set(0, 1); i2c_set(1, 1);
+    int ack = !i2c_sda();
+    i2c_set(0, 1);
+    return ack;
+}
+static uint8_t i2c_rd(int ack) {
+    uint8_t b = 0;
+    for (int i = 0; i < 8; i++) { i2c_set(0, 1); i2c_set(1, 1); b = (uint8_t)(b << 1 | i2c_sda()); }
+    i2c_set(0, !ack); i2c_set(1, !ack); i2c_set(0, 1);
+    return b;
+}
+static int ip5306_read(uint8_t reg) {     // -1 when nothing answers
+    i2c_start();
+    if (!i2c_wr(0x75 << 1)) { i2c_stop(); return -1; }
+    i2c_wr(reg);
+    i2c_start();
+    if (!i2c_wr(0x75 << 1 | 1)) { i2c_stop(); return -1; }
+    int v = i2c_rd(0);
+    i2c_stop();
+    return v;
+}
+
+// every 5 s: battery level and charging from the IP5306, USB power from pin 86
+static void status_poll(void) {
+    uint32_t now = ms_now();
+    stat_read();
+    if (bat_ms && now - bat_ms < 5000) return;
+    bat_ms = now ? now : 1;
+    usb_power = (REG_GPIO >> 2) & 1;
+    int lv = ip5306_read(0x78);
+    REG_GPIO = 0;                              // the pins go back to the board LEDs
+    if (lv < 0) { bat_level = -1; return; }
+    switch (lv & 0xF0) {
+    case 0x00: bat_level = 3; break;
+    case 0x80: bat_level = 2; break;
+    case 0xC0: bat_level = 1; break;
+    default:   bat_level = 0; break;
+    }
+    int c = ip5306_read(0x70);
+    REG_GPIO = 0;
+    bat_charging = c >= 0 && (c & 0x08);
+}
+
+// the icons, left to right: PC remote, USB power, battery
+static int status_glyphs(uint8_t *g) {
+    int n = 0;
+    if (remote_ms && ms_now() - remote_ms < 15000) g[n++] = G_PC;
+    if (usb_power || bat_charging) g[n++] = G_PLUG;
+    if (bat_level >= 0) g[n++] = (uint8_t)(G_BAT0 + bat_level);
+    return n;
+}
+
 // ================================================================ menu model
 enum {
     P_MAIN, P_LIBRARY, P_BROWSER, P_DISPLAY, P_AUDIO, P_CONTROLS, P_SYSTEM, P_INFO,
@@ -1354,7 +1522,7 @@ enum {
     I_SRC_CART, I_PLAY_CART, I_ERASE_CART, I_PLAY_SD, I_WRITE_CART, I_PG_POWER, I_CHOICE,
     I_PG_RECENT, I_RECENT, I_SHOT, I_PG_CHEATS, I_CHEAT, I_CHEAT_ADD, I_CHEAT_TOGGLE, I_CHEAT_EDIT,
     I_CHEAT_DEL, I_COPY_FLASH, I_FL_PLAY, I_FL_DEL, I_PG_UPDATE, I_UPD_FW, I_UPD_FPGA, I_UPD_GO,
-    I_PG_TOOLS, I_PRINTER
+    I_PG_TOOLS, I_PRINTER, I_LASTPRINT
 };
 
 typedef struct {
@@ -1582,6 +1750,10 @@ static void build_page(void) {
         item_t *it = add(I_PRINTER, G_DISPLAY, "Game Boy Printer", "Be a printer for a real Game Boy on the link port. The running game is closed first.");
         strcpy(it->value, "link port");
         add_info("Link pins", "41 SC  42 SI  56 SO");
+        add_opt(G_DISPLAY, "Virtual Printer", "Games print to a Game Boy Printer inside the FPGA. Pages go to /Prints on the SD card.", &set.vprinter, 2, o_offon);
+        it = add(I_LASTPRINT, G_DISPLAY, "Last Print", "Show the last page on the HDMI screen.");
+        if (prn_last_rows) sfmt(it->value, sizeof it->value, "%d lines", prn_last_rows * 8);
+        else strcpy(it->value, "none");
         break;
     }
     case P_FLACT:
@@ -1726,7 +1898,7 @@ static void build_page(void) {
         break;
     case P_INFO: {
         strcpy(page_title, "Info");
-        uint32_t st = REG_STAT;
+        uint32_t st = stat_read();
         if (st & 4) { game.save_pending = 1; game.dirty_ms = ms_now(); }
         if (game.loaded) {
             add_info("Game", "%s", game.name);
@@ -1902,8 +2074,19 @@ static const char *title_now(char *buf, int n) {
 }
 
 static void status_icons(int x, int y, uint8_t bg, uint8_t on, uint8_t off) {
+    uint8_t g[4];
+    int n = status_glyphs(g);
+    for (int i = 0; i < n; i++) osd_put(x - 2 * (n - i), y, g[i], AT(on, bg));
     osd_put(x, y, G_SDCARD, AT(sd_mounted ? on : off, bg));
     osd_put(x + 2, y, G_DISPLAY, AT(set.hdmi_off ? off : on, bg));
+}
+
+// the same icons on the LCD, right aligned to column xr (exclusive)
+static int lcd_status(int xr, int y, uint8_t fg, uint8_t bg) {
+    uint8_t g[4];
+    int n = status_glyphs(g);
+    for (int i = 0; i < n; i++) lcd_put(xr - n + i, y, g[i], AT(fg, bg));
+    return xr - n;
 }
 
 // ---- Pocket
@@ -2166,6 +2349,7 @@ static void lcd_pocket(void) {
     lcd_put(0, 0, G_STAR, AT(CL_BLUE, hb));
     lcd_textn(2, 0, lcd_title(), 12, AT(CL_WHITE, hb));
     lcd_put(15, 0, G_SDCARD, AT(sd_mounted ? CL_GB3 : CL_LINE, hb));
+    lcd_status(15, 0, CL_WHITE, hb);
     static const lcdst_t st = { CL_SHADE, CL_WHITE, CL_WHITE, CL_BLACK, CL_GREY, CL_BLUE, CL_YELLOW, CL_BLUE,
                                 LS_PILL, 0, 0, 1, 1, 0, 0 };
     lcd_list(0, 1, LCD_W, 10, &st, 1);
@@ -2241,6 +2425,7 @@ static void lcd_ipod(void) {
     lcd_text(8 - (int)strlen(b) / 2, 0, b, AT(CL_BLACK, hb));
     if (game.loaded) lcd_put(0, 0, G_PLAY, AT(CL_BLUE, hb));
     lcd_put(15, 0, G_SDCARD, AT(sd_mounted ? CL_BLUE : CL_GREY, hb));
+    lcd_status(15, 0, CL_BLACK, hb);
     static const lcdst_t st = { CL_WHITE, CL_BLACK, CL_BLUE, CL_WHITE, CL_GREY, CL_WHITE, CL_GREY, CL_WHITE,
                                 LS_BAR, 0, 0, 0, 1, G_CHEV_R, 0, 1 };
     lcd_list(0, 1, LCD_W, 11, &st, 1);
@@ -2360,6 +2545,9 @@ static void draw_aos(void) {
     if (nitems) { sfmt(tb, sizeof tb, "%c %d/%d", G_BULLET, cursor + 1, nitems); xr -= (int)strlen(tb); osd_text(xr, 22, tb, AT(CL_WHITE, bg)); }
     const char *bd = aos_badge();
     if (*bd) { xr -= (int)strlen(bd) + 1; osd_text(xr, 22, bd, AT(CL_BLACK, CL_LIGHT)); }
+    uint8_t g[4];
+    int n = status_glyphs(g);
+    for (int i = 0; i < n; i++) osd_put(xr - 2 * (n - i), 22, g[i], AT(CL_WHITE, bg));
 }
 
 static void lcd_aos(void) {
@@ -2405,6 +2593,7 @@ static void lcd_aos(void) {
         lcd_textn(3, 11, marquee(t, lw - 4), lw - 4, AT(CL_GREY, bg));
     }
     lcd_text(15 - rw, 11, tb, AT(CL_WHITE, bg));
+    lcd_status(14 - rw, 11, CL_WHITE, bg);
 }
 
 static void draw_lcd(void) {
@@ -2701,6 +2890,10 @@ static int activate(item_t *it, int dir) {
         break;
     case I_PG_RECENT: go(P_RECENT, 0); break;
     case I_PG_TOOLS: go(P_TOOLS, 0); break;
+    case I_LASTPRINT:
+        vprn_view();
+        go(P_TOOLS, 1);
+        break;
     case I_PRINTER:
         printer_run();
         build_cats();
@@ -2868,6 +3061,7 @@ static void menu_run(void) {
     while (!quit) {
         draw_menu();
         uint32_t k = poll_keys(mq_on ? 250 : page == P_INFO || page == P_GAME || page == P_MAIN ? 1000 : 5000);
+        status_poll();
         uint32_t now = ms_now();
         if (sleep_after_ms() && (now - last_input_ms) > sleep_after_ms()) { do_sleep(); osd_invalidate(); }
         if (!k) {
@@ -3015,6 +3209,7 @@ int main(void) {
         }
         if (set.theme >= 8) set.theme = 1;
         if (set.home_scene > 3) set.home_scene = 0;
+        if (set.vprinter > 1) set.vprinter = 0;
         set_stored = set;
     }
     apply_settings();
@@ -3084,6 +3279,8 @@ int main(void) {
         int open = ((rel & K_S1) && !s1_long && now - s1_down >= 20) || (press & K_UMENU) ||
                    ((in & K_SEL) && (in & K_START) && (press & (K_SEL | K_START)));
         if (home_running && (press & (K_A | K_X | K_START))) open = 1;     // PRESS START
+        if (set.vprinter && game.loaded) vprn_poll(now);
+        status_poll();
         // play time (gaps over 5 s are the menu or sleep), fast forward, screenshot on L
         if (game.loaded && !(ctrl & C_PAUSE) && now - pt_last < 5000) play_ms += now - pt_last;
         pt_last = now;
@@ -3095,7 +3292,7 @@ int main(void) {
         }
         if (((rel & K_S2) && !s2_long && now - s2_down >= 20) || (press & K_URESET)) reset_game();
 
-        uint32_t st = REG_STAT;
+        uint32_t st = stat_read();
         if (st & 4) { game.save_pending = 1; game.dirty_ms = now; }
         if (open) {
             if (toast_until) { toast_until = 0; ctrl_bits(C_OSD, 0); }

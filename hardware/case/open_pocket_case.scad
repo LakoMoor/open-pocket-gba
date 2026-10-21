@@ -37,7 +37,7 @@ small_sz = [9, 4.5];
 spk_c = [73, 15];                         // speaker grille
 usbc_x = 40;  jack_x = 18;                // bottom edge
 link_x = 60;                              // top edge
-tang_y = 86;                              // Tang Nano 20K, horizontal behind the screen
+tang_y = 104;                             // Tang Nano 20K, horizontal behind the screen
 hdmi_z = 4;  usb_tang_z = 3.5;            // heights below the PCB of the side connectors
 
 module rounded_box(w, h, d, r, rbr) {

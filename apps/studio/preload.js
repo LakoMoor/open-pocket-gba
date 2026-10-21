@@ -14,5 +14,13 @@ contextBridge.exposeInMainWorld('studio', {
   shot: () => ipcRenderer.invoke('shot'),
   font: () => ipcRenderer.invoke('font'),
   open: url => ipcRenderer.invoke('open', url),
+  ideFiles: () => ipcRenderer.invoke('ide-files'),
+  ideRead: p => ipcRenderer.invoke('ide-read', p),
+  ideWrite: (p, text) => ipcRenderer.invoke('ide-write', p, text),
+  ideBuild: () => ipcRenderer.invoke('ide-build'),
+  simLoad: opts => ipcRenderer.invoke('sim-load', opts),
+  simSave: (flash, sd) => ipcRenderer.invoke('sim-save', flash, sd),
+  simResetFlash: () => ipcRenderer.invoke('sim-reset-flash'),
+  simSdOpen: sd => ipcRenderer.invoke('sim-sd-open', sd),
   on: (ch, fn) => ipcRenderer.on(ch, (_, d) => fn(d)),
 });

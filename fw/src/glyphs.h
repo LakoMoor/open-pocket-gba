@@ -33,3 +33,9 @@
 #define G_MOON 31
 #define G_RING_ON 96
 #define G_RING 127
+#define G_BAT0 123
+#define G_BAT1 124
+#define G_BAT2 125
+#define G_BAT3 126
+#define G_PLUG 94
+#define G_PC 92

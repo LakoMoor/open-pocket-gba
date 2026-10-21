@@ -115,6 +115,14 @@ IO_PORT "spk_p" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 IO_LOC  "spk_n" 75;
 IO_PORT "spk_n" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
+// carrier: USB power present (VBUS divider), pulled down when nothing is connected
+IO_LOC  "chg" 86;
+IO_PORT "chg" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+// Menu button of the carrier board, to GND
+IO_LOC  "key_menu_n" 54;
+IO_PORT "key_menu_n" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
 // Game Boy link port; the original is 5 V logic: use a level shifter (BSS138 / TXS0104)
 IO_LOC  "link_sc" 41;
 IO_PORT "link_sc" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;

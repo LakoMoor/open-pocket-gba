@@ -12,7 +12,8 @@ module uart_pad #(
     input             rx,
     output reg [11:0] pad,          // {R L X A RIGHT LEFT DOWN UP START SELECT Y B}
     output reg        key_menu,
-    output reg        key_reset
+    output reg        key_reset,
+    output            rx_seen       // one clock per received byte (remote activity)
 );
 
 localparam integer DIV = CLK_HZ / BAUD;
@@ -46,6 +47,7 @@ always @(posedge clk) begin
     end
 end
 
+assign rx_seen = strobe;
 wire press = (data >= "A") && (data <= "Z");
 wire [7:0] up = press ? data : data - 8'h20;
 always @(posedge clk) begin

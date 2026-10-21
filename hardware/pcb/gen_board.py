@@ -180,13 +180,14 @@ C0603 = ('Capacitor_SMD', 'C_0603_1608Metric')
 C0805 = ('Capacitor_SMD', 'C_0805_2012Metric')
 SOT23 = ('Package_TO_SOT_SMD', 'SOT-23')
 
-# Tang Nano 20K: horizontal behind the screen, HDMI at the left edge (back side mirrors it)
+# Tang Nano 20K: horizontal behind the screen, HDMI at the left edge (back side mirrors it);
+# the parts under it on the back fit below the module on its sockets
 TANG = {1: 'LCD_SCK', 2: 'LCD_MOSI', 3: 'AMP_EN', 5: 'KEY_START', 8: 'KEY_LEFT', 9: 'KEY_RIGHT',
         10: 'KEY_UP', 11: 'KEY_DOWN', 12: 'KEY_A', 13: 'KEY_B', 14: 'KEY_SELECT',
         19: '+3V3', 20: 'GND', 21: 'LCD_BL', 22: 'LCD_CS', 23: 'LCD_RES', 24: 'LCD_DC', 25: '+3V3', 26: 'GND',
         29: 'CART_DO', 30: 'CART_DI', 31: 'CART_CLK', 32: 'CART_CS', 33: 'KEY_MENU', 34: 'LINK_SO_3V',
         35: 'LINK_SC_3V', 36: 'LINK_SI_3V', 38: 'AUDIO_PDM', 39: 'GND', 40: 'TANG_5V'}
-part('U1', 'custom', tang_socket, 27.6, 86, 0, back=True, pads={str(k): v for k, v in TANG.items()},
+part('U1', 'custom', tang_socket, 27.6, 104, 0, back=True, pads={str(k): v for k, v in TANG.items()},
      value='Tang Nano 20K', mpn='2x PinSocket 1x20 2.54 mm, low profile')
 
 # buttons (front)
@@ -196,8 +197,9 @@ for ref, (x, y), n in [('SW1', (22, 57), 'KEY_UP'), ('SW2', (22, 35), 'KEY_DOWN'
 for ref, (x, y), n in [('SW7', (24, 20), 'KEY_SELECT'), ('SW8', (37, 20), 'KEY_START'), ('SW9', (50, 20), 'KEY_MENU')]:
     part(ref, *SMALL_SW, x, y, 0, pads={'1': n, '2': 'GND'}, value=n[4:].title(), mpn='TE TL3342')
 
-# screens (front): 2.4" ILI9341 module (14 pins at its left end) or 1.44" ST7735 (8 pins)
-part('J3', 'Connector_PinSocket_2.54mm', 'PinSocket_1x14_P2.54mm_Vertical', 6.5, 120.5, 0,
+# screens (front): 2.4" ILI9341 module (14 pins at its right end: the panel is turned 180 degrees,
+# the driver mirrors it) or 1.44" ST7735 (8 pins)
+part('J3', 'Connector_PinSocket_2.54mm', 'PinSocket_1x14_P2.54mm_Vertical', 79.5, 120.5, 0,
      pads={'1': 'SYS_5V', '2': 'GND', '3': 'LCD_CS', '4': 'LCD_RES', '5': 'LCD_DC', '6': 'LCD_MOSI', '7': 'LCD_SCK', '8': 'BL_SW'},
      value='LCD 2.4in ILI9341', mpn='2.4" SPI TFT 240x320 module')
 part('J4', 'Connector_PinSocket_2.54mm', 'PinSocket_1x08_P2.54mm_Vertical', 34.1, 127.5, -90,
@@ -287,8 +289,8 @@ def zone(layer):
 zone(pcbnew.F_Cu)
 zone(pcbnew.B_Cu)
 
-for txt, (x, y), layer, size in [('OPEN POCKET GBC', (43, 131), pcbnew.F_SilkS, 2.0), ('carrier v0.1', (43, 128.5), pcbnew.F_SilkS, 1.0),
-                                 ('OPEN POCKET GBC v0.1', (43, 70), pcbnew.B_SilkS, 1.6)]:
+for txt, (x, y), layer, size in [('OPEN POCKET GBC', (43, 72), pcbnew.F_SilkS, 2.0), ('carrier v0.1', (43, 69), pcbnew.F_SilkS, 1.0),
+                                 ('OPEN POCKET GBC v0.1', (43, 80), pcbnew.B_SilkS, 1.6)]:
     t = pcbnew.PCB_TEXT(board)
     t.SetText(txt)
     t.SetPosition(P(x, y))
