@@ -920,6 +920,7 @@ static void start_home(void) {
     memset(&game, 0, sizeof game);
     volatile uint8_t *rom = sdram(ROM_BASE);
     for (uint32_t i = 0; i < n; i++) rom[i] = home_rom[i];
+    rom[0x150] = set.home_scene < 3 ? set.home_scene : (uint8_t)(ms_now() % 3);   // scene for the ROM
     feed_header(n);
     ctrl_bits(C_DOWNLOAD, 0);
     wait_ms(2);
@@ -1164,6 +1165,7 @@ static const char *const o_fps[]   = { "60 fps", "30 fps" };
 static const char *const o_dim[]   = { "Off", "15 s", "30 s", "60 s" };
 static const char *const o_poll[]  = { "200 ms", "500 ms" };
 static const char *const o_spkmode[] = { "PWM 66 kHz", "Sigma-delta" };
+static const char *const o_scene[] = { "Synthwave", "Space", "City", "Random" };
 static uint8_t ff_on;                   // fast forward toggled in the menu
 static int ch_sel, fl_sel, upd_sel;     // selected cheat, flash game, update file
 static uint8_t ed_dig[9];               // code editor: 0..15, 16 = blank
@@ -1483,6 +1485,7 @@ static void build_page(void) {
         add_opt(G_SAVE, "Autosave", "Write the save 2 s after the game changes it, and when the menu opens.", &set.autosave, 2, o_offon);
         add_opt(G_CHECK, "Save Notifications", "Show a short message when the save was written.", &set.toasts, 2, o_offon);
         add_opt(G_PLAY, "Start-up", "Start the last game or open the menu at power-up.", &set.boot_menu, 2, o_boot);
+        add_opt(G_STAR, "Home Screen", "The animated scene behind the menu while no game is loaded.", &set.home_scene, 4, o_scene);
         add(I_DEFAULTS, G_RESET, "Reset Settings", "Restore all settings to their defaults.");
         add(I_PG_UPDATE, G_FLASH, "System Update", "Install new firmware or FPGA bitstream from the SD card.");
         break;
@@ -2218,7 +2221,7 @@ static void draw_code(void) {
         osd_text(21 - (int)strlen(b) / 2, 14, b, AT(CL_LIGHT, bg));
     } else osd_text(11, 14, "6 or 9 digits: ABC-DEF-GHI", AT(CL_GREY, bg));
     if (ed_err) osd_text(14, 16, "Not a valid code", AT(CL_RED, bg));
-    osd_text(5, 20, "\x1a\x1b digit   \x05\x04 move   A save   B cancel", AT(CL_GREY, bg));
+    osd_text(4, 20, "\x1a\x1b digit  \x05\x04 move  A save  B cancel", AT(CL_GREY, bg));
     osd_present();
 
     lcd_clear(AT(CL_WHITE, bg));
@@ -2325,6 +2328,7 @@ static int opt_changed(item_t *it) {
         return 1;
     }
     if (it->val == &set.theme) { osd_invalidate(); build_cats(); }
+    if (it->val == &set.home_scene && home_running) start_home();
     apply_settings();
     if (page == P_POWER) go(P_POWER, 1);              // refresh the preset value
     return 1;
@@ -2768,6 +2772,7 @@ int main(void) {
             if (o.power_mode) { set.sdram_pd = 1; set.lcd_slow = 1; set.dim_idx = 2; set.poll_slow = 1; set.hdmi_off = 1; }
         }
         if (set.theme >= 8) set.theme = 1;
+        if (set.home_scene > 3) set.home_scene = 0;
         set_stored = set;
     }
     apply_settings();
