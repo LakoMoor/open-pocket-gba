@@ -16,7 +16,8 @@ image[0xa0:0xac] = b'OPENPOCKET  '
 image[0xac:0xb0] = b'OPGB'
 image[0xb2] = 0x96
 image[0xbd] = (-sum(image[0xa0:0xbd]) - 0x19) & 255
-arm = [0xe3a00003, 0xe3a01301, 0xe1c100b0,  # Mode 3, DISPCNT
+arm = [0xe3a00b01, 0xe3800003,             # 0x0403: BG2 enable + Mode 3
+       0xe3a01301, 0xe1c100b0,             # DISPCNT
        0xe3a04007, 0xe2944005, 0xe354000c,  # 7+5, CMP
        0x13a04000, 0xef000000,             # MOVNE skipped, SWI/return
        0xe3a03403, 0xe5834000,             # IWRAM[0] = 12

@@ -68,7 +68,8 @@ ROM into SDRAM. The reset vectors jump to 0x08000000. These diagnostic vectors
 are **not a compatible BIOS**: SWI only returns, and IRQ records a test marker,
 disables IME and returns. No Nintendo BIOS or commercial ROM is included.
 
-The diagnostic verifies arithmetic/condition execution, SWI, odd LDRH, timer IRQ,
+The diagnostic sets DISPCNT=0x0403 (Mode 3 plus BG2 enable) and verifies
+arithmetic/condition execution, SWI, odd LDRH, timer IRQ,
 SPSR return and ARM-to-Thumb BX, then writes a full RGB555 ramp to VRAM. Only after
 its completion signature does HDMI begin fetching lines. Two 120-word banks are
 used across clock domains; row identity is published through a synchronized

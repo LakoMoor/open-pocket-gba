@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
                     seen_thumb |= d.thumb;
                     if(d.fault) throw std::runtime_error("unexpected memory fault");
                     if(mem[0x600000/4]==0x12345678) {
-                        if (!seen_thumb || d.dispcnt!=3 || mem[0x640000/4]!=12 || writes!=38400 || mem[0x640008/4]!=0x22000011 || mem[0x64000c/4]!=1)
+                        if (!seen_thumb || d.dispcnt!=0x0403 || mem[0x640000/4]!=12 || writes!=38400 || mem[0x640008/4]!=0x22000011 || mem[0x64000c/4]!=1)
                             throw std::runtime_error("CPU mode, SWI, condition, RAM or write count mismatch");
                         for(unsigned p=0;p<38400;p++) {
                             unsigned v=(mem[0x680000/4+p/2] >> ((p%2)*16)) & 0xffff;

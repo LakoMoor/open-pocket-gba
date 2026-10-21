@@ -85,7 +85,9 @@ module gba_top (
         .snapshot({debug_status,debug_pc,debug_instruction,fault_addr}),.tx(uart_tx));
     gba_mode3_scanout scanout(.clk(clk_sys),.reset(reset),.video_req(video_req),.video_addr(video_addr),
         .video_ack(video_ack),.video_rvalid(video_rvalid),.video_rdata(lp_rdata),
-        .vclk(clk_p),.vreset(vreset),.enable(demo_done),.cx(cx),.cy(cy),.rgb(rgb),.underrun(underrun));
+        .vclk(clk_p),.vreset(vreset),
+        .enable(demo_done && dispcnt[2:0]==3 && dispcnt[10] && !dispcnt[7]),
+        .cx(cx),.cy(cy),.rgb(rgb),.underrun(underrun));
     wire lp_req,lp_we,lp_ack,lp_rvalid;
     wire [20:0] lp_addr;
     wire [31:0] lp_wdata;
