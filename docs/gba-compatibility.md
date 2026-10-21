@@ -20,7 +20,7 @@ ARM/Thumb + SDRAM + Mode 3 diagnostic, not a replacement for a complete GBA.
 | SRAM / Flash / EEPROM / RTC | Raw save backing only. Protocols, persistence and RTC absent. |
 | Menu / FatFs | GBC menu remains unchanged; no GBA menu firmware. |
 | Reset | CPU and scanout reboot unit tests pass. Full-board pin-model test verifies two boots including a button reset, ROM reload and repeated pixel checks. |
-| FPGA / hardware | See measured results in `gba-progress.md`; physical board not programmed or tested by this task. |
+| FPGA / hardware | Strict routed timing and bitstream generation pass. Loaded into board SRAM; HDMI capture is black, so hardware execution/display is not yet validated. See `gba-progress.md`. |
 
 No commercial game or third-party homebrew compatibility is claimed. The only
 executed ROM is the original `fw/gba/make_diagnostic.py` program. Its header omits

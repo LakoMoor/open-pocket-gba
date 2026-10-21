@@ -35,7 +35,9 @@ module gba_top (
     always_ff @(posedge clk_p) reset_p <= {reset_p[0],reset};
     wire vreset = !(&hpor) || reset_p[1];
     wire sdram_ready;
-    logic [31:0] diagnostic[0:255];
+    // Sparse 1 KiB boot image is cheaper as logic than a dedicated BSRAM.
+    // Also avoids measured short counter-to-BSRAM address hold paths.
+    (* rom_style = "logic", ram_style = "logic" *) logic [31:0] diagnostic[0:255];
     initial $readmemh("fw/gba/diagnostic.hex",diagnostic);
     logic [8:0] load_index;
     logic running,demo_done;

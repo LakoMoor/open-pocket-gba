@@ -28,3 +28,9 @@ $V --cc --exe -O2 -Wno-fatal --top-module gba_timers_irq \
   "$(pwd)/sim/gba/peripherals_tb.cpp" >build/gba/peripherals-verilator.log 2>&1
 $MAKE -s -j4 -C build/gba/peripherals -f Vgba_timers_irq.mk >build/gba/peripherals-compile.log 2>&1
 build/gba/peripherals/Vgba_timers_irq | tee build/gba/peripherals-results.txt
+mkdir -p build/gba/memory
+$V --cc --exe -O2 -Wno-fatal --top-module gba_memory \
+  --Mdir build/gba/memory rtl/gba/memory/gba_address_decode.sv rtl/gba/memory/gba_memory.sv \
+  rtl/gba/peripherals/gba_timers_irq.sv "$(pwd)/sim/gba/memory_tb.cpp" >build/gba/memory-verilator.log 2>&1
+$MAKE -s -j4 -C build/gba/memory -f Vgba_memory.mk >build/gba/memory-compile.log 2>&1
+build/gba/memory/Vgba_memory | tee build/gba/memory-results.txt

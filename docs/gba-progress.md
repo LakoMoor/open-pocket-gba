@@ -2,6 +2,9 @@
 
 Date: 2026-10-21. Branch: `feature/open-pocket-gba`.
 
+Repository: [LakoMoor/open-pocket-gba](https://github.com/LakoMoor/open-pocket-gba).
+The original Open Pocket GBC history is retained; GBC remains the `upstream` remote.
+
 This is a tested, limited bring-up configuration. The full requested console is
 **not finished**, and no resource-based impossibility claim is made for 20K.
 
@@ -32,12 +35,19 @@ This is a tested, limited bring-up configuration. The full requested console is
   two-line CDC handoff, no scanout underrun or CPU starvation.
 * Four timer prescalers, four-way cascade, counter reload and restart, byte
   enables, IE/IF/IME, W1C interrupt flags and keypad OR/AND/retrigger tests.
+* Memory bus delayed acceptance/completion, byte masks, mirror translation,
+  ROM write rejection, unsupported I/O/ROM-overflow faults and reset cancellation.
 
 `bash sim/gba/board.sh`: full `gba_top` with existing behavioral board primitives
 and SDRAM pin model. Loader -> SDRAM -> CPU -> VRAM -> HDMI RGB verified for a
 691200 pixels across two board boots, including a button reset and repeat ROM
 load, approximately 266.96 ms simulated. Serializer electrical
 behavior and audio regeneration are not covered by that model.
+
+CPU-generated VRAM captured from the simulated HDMI RGB input (not a physical
+capture and not a replacement pattern generator):
+
+![Original diagnostic RGB555 ramp, simulated 720x480 HDMI](img/gba-diagnostic-simulation.png)
 
 Raw results: `build/gba/*-results.txt`; compile/lint output stays in the matching
 logs. Nothing in the test runner suppresses tool failure with `|| true`.
@@ -49,13 +59,27 @@ physical GBC compatibility or replace a full GBC gameplay regression run.
 
 ## Synthesis / place-and-route / physical testing
 
-Final build measurements are recorded in `gba-measurements.txt` when available.
+Final build measurements are recorded in `gba-measurements.txt`.
 `./build.sh gba_top` produces `gba_top.fs`, `yosys.log`, `nextpnr.log` and
 `stat.txt` under `build/gba_top/`. GBA uses `gba_clocks.sdc` and does not pass
 `--timing-allow-fail`. GBC retains the original build defaults.
 
-Physical testing: **not performed**. No persistent flash changes were made.
-The diagnostic's successful fit would not establish full GBA fit or compatibility.
+The logic-ROM configuration passes strict place-and-route (seed 1): 9532 LUT4,
+2229 DFF and 1 BSRAM. Final reported Fmax: system 85.22 MHz against 33.75 MHz;
+pixel 188.22 MHz against 27 MHz. No hold errors and no `--timing-allow-fail`.
+`gowin_pack` produced `build/gba_top/gba_top.fs` (7263596 bytes).
+
+Physical test on 2026-10-22: the GW2AR-18 board was detected over JTAG and the
+bitstream loaded into volatile SRAM successfully. USB3.0 UHD HDMI capture is
+currently black; the CPU/SDRAM/video path is **not hardware-validated**. Diagnosis
+continues. No persistent flash changes were made. Successful fit does not establish
+full GBA compatibility.
+
+The first BSRAM-ROM implementation failed 12 hold checks on the loader counter
+to diagnostic-ROM address paths, despite passing setup timing. The sparse 1 KiB
+ROM was changed to logic ROM (verified by synthesis: only the scanout uses BSRAM).
+Both simulated board boots still pass. Strict routing of that change is recorded
+in the final measurements; no timing checks were waived.
 
 ## Remaining concrete architecture gates
 

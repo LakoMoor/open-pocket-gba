@@ -37,7 +37,7 @@ CPU caches, menu and video buffers. A direct GBATang memory placement is infeasi
 | IWRAM | SDRAM | 32 KiB: 16 blocks for low-latency execution |
 | ROM instruction/data cache | none | 4–8 KiB: 2–4 blocks plus tags |
 | HDMI two-line storage | 256x32, 1 block | 1 block |
-| Embedded diagnostic ROM | 256x32, 1 block | removable after external loader integration |
+| Embedded diagnostic ROM | sparse 256x32 LUT ROM, no BSRAM | removable after external loader integration |
 | PPU line/OBJ/palette/OAM caches | none | reserve 8–12 blocks; needs synthesis |
 | Service CPU/OSD/audio FIFOs | none | reserve 3–5 blocks; needs synthesis |
 
