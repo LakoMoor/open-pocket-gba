@@ -1087,10 +1087,11 @@ static void prn_screen(const char *state) {
     osd_text(7, 6, state, AT(CL_LIGHT, bg));
     sfmt(b, sizeof b, "%d packets, %u KB, %d printed", pr.packets, (pr.data_len + pr.page_len) >> 10, pr.pages);
     osd_text(7, 8, b, AT(CL_GREY, bg));
-    osd_text(7, 12, "Link cable from the Game Boy to", AT(CL_GREY, bg));
-    osd_text(7, 13, "pins 41 SC, 42 SI, 56 SO (5 V shifter)", AT(CL_GREY, bg));
-    osd_text(7, 14, "and print from the game.", AT(CL_GREY, bg));
-    osd_text(7, 17, "Prints go to /Prints on the SD card.", AT(CL_GREY, bg));
+    osd_text(7, 12, "Link cable from the Game Boy", AT(CL_GREY, bg));
+    osd_text(7, 13, "to pins 41 SC, 42 SI, 56 SO", AT(CL_GREY, bg));
+    osd_text(7, 14, "(5 V level shifter), then", AT(CL_GREY, bg));
+    osd_text(7, 15, "print from the game.", AT(CL_GREY, bg));
+    osd_text(7, 17, "Prints go to /Prints on SD.", AT(CL_GREY, bg));
     hint(7, 20, "B", "Exit", bg);
     osd_present();
     lcd_clear(AT(CL_WHITE, bg));
@@ -1129,6 +1130,7 @@ static void printer_run(void) {
         uint32_t in = REG_IN & 0xFFFF, press = in & ~held_k;
         held_k = in;
         if (press & (K_B | K_Y | K_S1 | K_UMENU)) break;
+        if (press & K_SEL) lcd_dump();               // screenshots (tools/lcd_shot.py)
         int idle = now - pr.last_ms > 60;             // no transfer going on: time for slower work
         if (!idle) continue;
         if (pr.page_ready || (pr.page_len && !pr.printing && now - pr.last_ms > 1500)) {
