@@ -22,5 +22,11 @@ contextBridge.exposeInMainWorld('studio', {
   simSave: (flash, sd) => ipcRenderer.invoke('sim-save', flash, sd),
   simResetFlash: () => ipcRenderer.invoke('sim-reset-flash'),
   simSdOpen: sd => ipcRenderer.invoke('sim-sd-open', sd),
+  rtlAvailable: () => ipcRenderer.invoke('rtl-available'),
+  rtlBuild: () => ipcRenderer.invoke('rtl-build'),
+  rtlStart: opts => ipcRenderer.invoke('rtl-start', opts),
+  rtlKey: bits => ipcRenderer.invoke('rtl-key', bits),
+  rtlRemote: ch => ipcRenderer.invoke('rtl-remote', ch),
+  rtlStop: () => ipcRenderer.invoke('rtl-stop'),
   on: (ch, fn) => ipcRenderer.on(ch, (_, d) => fn(d)),
 });

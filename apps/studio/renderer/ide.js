@@ -2,6 +2,7 @@
 (() => {
   const $ = s => document.querySelector(s);
   let editor = null, cur = null, sim = null, raf = 0, t0 = 0, simKeys = 0, audio = null, saveTimer = 0;
+  let mode = 'rtl', rtlRunning = false;
 
   // ---------------------------------------------------------------- editor
   require.config({ paths: { vs: '../node_modules/monaco-editor/min/vs' } });
@@ -95,6 +96,7 @@
 
   async function start(freshFw) {
     stop();
+    if (mode === 'rtl') return startRtl(freshFw);
     const { flash, sd } = await S.simLoad({ freshFw });
     slog.textContent = '';
     try {
@@ -106,6 +108,7 @@
     loop();
   }
   function stop() {
+    if (rtlRunning) { S.rtlStop(); rtlRunning = false; }
     if (raf) cancelAnimationFrame(raf);
     raf = 0;
     if (sim) persist(true);
@@ -134,6 +137,55 @@
     if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = 0; persist(false); }, 1500);
   }
   $('#simreset').onclick = () => start(false);
+  document.querySelectorAll('#simmode button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('#simmode button').forEach(x => x.classList.toggle('on', x === b));
+    stop();
+    mode = b.dataset.mode;
+    $('#simstate').textContent = mode === 'rtl' ? 'Tang Nano 20K: the real RTL in Verilator (about 1/70 of real time)' : 'firmware only: fast, no Game Boy core';
+  });
+  $('#rtlbuild').onclick = async () => {
+    blog.textContent = '$ sim/tang/build.sh\n';
+    const code = await S.rtlBuild();
+    blog.textContent += code === 0 ? '\nsimulator built\n' : `\nbuild failed (${code})\n`;
+  };
+
+  // ---- Tang Nano 20K: the Verilator model runs in its own process
+  const hdmiFull = document.createElement('canvas');
+  hdmiFull.width = 720; hdmiFull.height = 480;
+  const hctx = hdmiFull.getContext('2d'), himgFull = hctx.createImageData(720, 480);
+  async function startRtl(freshFw) {
+    slog.textContent = '';
+    const r = await S.rtlStart({ freshFw });
+    if (!r.ok) { $('#simstate').textContent = r.msg; return; }
+    rtlRunning = true;
+    $('#simstate').textContent = 'Tang Nano 20K: starting (the boot takes about a minute of real time)';
+    $('#simhdmi').focus();
+  }
+  S.on('rtl-log', t => { slog.textContent += t; slog.scrollTop = slog.scrollHeight; });
+  S.on('rtl-time', ms => { if (rtlRunning) $('#simstate').textContent = `Tang Nano 20K · ${(ms / 1000).toFixed(2)} s simulated`; });
+  S.on('rtl-exit', code => { if (rtlRunning) { rtlRunning = false; $('#simstate').textContent = 'simulator exited (' + code + ')'; } });
+  S.on('rtl-hdmi', rgb => {
+    const d = himgFull.data;
+    for (let i = 0, j = 0; i < 720 * 480; i++, j += 3) { d[i * 4] = rgb[j]; d[i * 4 + 1] = rgb[j + 1]; d[i * 4 + 2] = rgb[j + 2]; d[i * 4 + 3] = 255; }
+    hctx.putImageData(himgFull, 0, 0);
+    hdmi.imageSmoothingEnabled = false;
+    hdmi.drawImage(hdmiFull, 0, 0, 672, 480);
+  });
+  S.on('rtl-lcd', px => {
+    const d = limg.data, v16 = new Uint16Array(px.buffer, px.byteOffset, 128 * 128);
+    for (let i = 0; i < 128 * 128; i++) {
+      const v = v16[i];
+      d[i * 4] = ((v >> 11) & 31) * 255 / 31; d[i * 4 + 1] = ((v >> 5) & 63) * 255 / 63; d[i * 4 + 2] = (v & 31) * 255 / 31; d[i * 4 + 3] = 255;
+    }
+    lcd.putImageData(limg, 0, 0);
+  });
+  // REG_IN bits (keyboard map) -> the board buttons: up down left right a b select start, S1, S2
+  function rtlBits(k) {
+    return ((k & 16) ? 1 : 0) | ((k & 32) ? 2 : 0) | ((k & 64) ? 4 : 0) | ((k & 128) ? 8 : 0) | ((k & 256) ? 16 : 0) |
+           ((k & 1) ? 32 : 0) | ((k & 4) ? 64 : 0) | ((k & 8) ? 128 : 0) | ((k & 4096) ? 256 : 0) | ((k & 8192) ? 512 : 0);
+  }
+  let lastRtl = -1;
+  setInterval(() => { if (rtlRunning) { const b = rtlBits(simKeys); if (b !== lastRtl) { lastRtl = b; S.rtlKey(b); } } }, 30);
   $('#simsd').onclick = () => { if (sim) S.simSdOpen(sim.board.sd.img); };
 
   // ---------------------------------------------------------------- screens

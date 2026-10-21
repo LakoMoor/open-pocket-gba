@@ -872,6 +872,9 @@ always @(*) begin
 end
 
 wire [7:0] spr_extra_tile[0:1];
+wire [7:0] spr_extra_tile0_w, spr_extra_tile1_w;   // ports go to plain wires (Verilator: no tristate on array elements)
+assign spr_extra_tile[0] = spr_extra_tile0_w;
+assign spr_extra_tile[1] = spr_extra_tile1_w;
 wire [2:0] spr_extra_cgb_pal;
 wire [3:0] spr_extra_index;
 wire spr_extra_pal;
@@ -1093,8 +1096,8 @@ sprites sprites (
 	.extra_tile_addr  ( sprite_extra_addr ),
 
 	.spr_extra_found  ( spr_extra_found ),
-	.spr_extra_tile0  ( spr_extra_tile[0] ),
-	.spr_extra_tile1  ( spr_extra_tile[1] ),
+	.spr_extra_tile0  ( spr_extra_tile0_w ),
+	.spr_extra_tile1  ( spr_extra_tile1_w ),
 	.spr_extra_pal    ( spr_extra_pal ),
 	.spr_extra_prio   ( spr_extra_prio ),
 	.spr_extra_cgb_pal( spr_extra_cgb_pal ),

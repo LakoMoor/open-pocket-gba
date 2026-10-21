@@ -337,6 +337,57 @@ ipcMain.handle('sim-save', (_, flash, sd) => {
   if (sd) fs.writeFileSync(path.join(SIMDIR, 'sd.img'), sd);
   return true;
 });
+
+// ---- the Tang Nano 20K RTL simulator (sim/tang, Verilator): frames and the log over stdout
+const RTL_EXE = path.join(ROOT, 'build', 'tang_sim', 'tang_sim.exe');
+let rtlProc = null;
+ipcMain.handle('rtl-available', () => fs.existsSync(RTL_EXE));
+ipcMain.handle('rtl-build', () => new Promise(resolve => {
+  const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
+  const p = spawn(bash, [path.join(ROOT, 'sim', 'tang', 'build.sh')], { cwd: ROOT, windowsHide: true });
+  const fwd = d => send('build-log', d.toString());
+  p.stdout.on('data', fwd); p.stderr.on('data', fwd);
+  p.on('error', e => { send('build-log', e.message + '\n'); resolve(-1); });
+  p.on('close', code => resolve(code));
+}));
+ipcMain.handle('rtl-start', (_, opts) => {
+  if (rtlProc) { rtlProc.kill(); rtlProc = null; }
+  if (!fs.existsSync(RTL_EXE)) return { ok: false, msg: 'build the simulator first (Build RTL)' };
+  const flash = simFlash(opts && opts.freshFw);
+  fs.writeFileSync(path.join(SIMDIR, 'flash.bin'), flash);
+  simSd(false);
+  const args = ['--flash', path.join(SIMDIR, 'flash.bin'), '--sd', path.join(SIMDIR, 'sd.img')];
+  if (opts && opts.noHdmi) args.push('--no-hdmi');
+  const p = spawn(RTL_EXE, args, { cwd: ROOT, windowsHide: true });
+  rtlProc = p;
+  let buf = Buffer.alloc(0);
+  p.stdout.on('data', d => {
+    buf = buf.length ? Buffer.concat([buf, d]) : d;
+    while (buf.length >= 5) {
+      const n = buf.readUInt32LE(1);
+      if (buf.length < 5 + n) break;
+      const type = String.fromCharCode(buf[0]), data = buf.subarray(5, 5 + n);
+      if (type === 'L') send('rtl-log', data.toString('latin1'));
+      else if (type === 'H') send('rtl-hdmi', new Uint8Array(data));
+      else if (type === 'C') send('rtl-lcd', new Uint8Array(data));
+      else if (type === 'T') send('rtl-time', data.readUInt32LE(0));
+      buf = buf.subarray(5 + n);
+    }
+  });
+  p.stderr.on('data', d => send('rtl-log', d.toString()));
+  p.on('close', code => { if (rtlProc === p) rtlProc = null; send('rtl-exit', code); });
+  return { ok: true };
+});
+ipcMain.handle('rtl-key', (_, bits) => { if (rtlProc) rtlProc.stdin.write('K ' + bits.toString(16) + '\n'); return true; });
+ipcMain.handle('rtl-remote', (_, ch) => { if (rtlProc) rtlProc.stdin.write('R ' + ch + '\n'); return true; });
+ipcMain.handle('rtl-stop', () => {
+  if (!rtlProc) return true;
+  const p = rtlProc;
+  p.stdin.write('Q\n');
+  setTimeout(() => { try { p.kill(); } catch (e) {} }, 3000);
+  rtlProc = null;
+  return true;
+});
 ipcMain.handle('sim-reset-flash', () => { fs.rmSync(path.join(SIMDIR, 'flash.bin'), { force: true }); return true; });
 ipcMain.handle('sim-sd-open', (_, sd) => {
   const { readImage } = require('./sim/fat');
@@ -360,5 +411,5 @@ app.whenReady().then(() => {
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 });
-app.on('window-all-closed', () => { if (port && port.isOpen) port.close(); app.quit(); });
+app.on('window-all-closed', () => { if (port && port.isOpen) port.close(); if (rtlProc) rtlProc.kill(); app.quit(); });
 if (process.env.STUDIO_SHOT) require(process.env.STUDIO_SHOT);      // screenshots for the docs

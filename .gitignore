@@ -2,7 +2,6 @@
 build/
 *.vvp
 *.log
-sim/
 
 # local reference checkouts (not part of the project)
 ref_apicula/
@@ -23,6 +22,7 @@ fw/build/
 sim/*
 !sim/iosys_tb.cpp
 !sim/build_iosys_tb.sh
+!sim/tang/
 fw/boot/*.bin
 fw/boot/*.elf
 

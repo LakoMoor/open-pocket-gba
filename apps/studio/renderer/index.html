@@ -109,8 +109,12 @@
       <pre class="ide-out" id="buildlog"></pre>
     </div>
     <div class="ide-sim">
-      <div class="ide-bar"><span class="hint" id="simstate">simulator stopped</span><span class="grow"></span>
+      <div class="ide-bar">
+        <div class="seg small" id="simmode"><button class="on" data-mode="rtl">Tang Nano 20K</button><button data-mode="fw">Firmware only</button></div>
+        <span class="grow"></span>
+        <button class="item small" id="rtlbuild">Build RTL</button>
         <button class="item small" id="simreset">Reset</button><button class="item small" id="simsd">SD files</button></div>
+      <div class="hint" id="simstate" style="margin:-4px 0 8px">simulator stopped</div>
       <canvas id="simhdmi" width="672" height="480" tabindex="0"></canvas>
       <div class="row" style="margin:12px 0;align-items:flex-start">
         <canvas id="simlcd" width="128" height="128" tabindex="0"></canvas>
