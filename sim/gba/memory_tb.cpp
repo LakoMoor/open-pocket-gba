@@ -31,10 +31,11 @@ int main(int argc,char**argv){
         d.mem_rvalid=1;d.mem_rdata=0x89abcdef;tick();
         check(d.done && d.rdata==0x89abcdef,"read response missing");finish();
         for(auto a:{0x00000000u,0x08000000u}){
-            reset();start(a,true,1);check(d.done && d.fault && !d.mem_req,"readonly write was accepted");finish();
+            reset();start(a,true,1);check(d.done && d.fault && !d.mem_req && d.fault_addr==a,"readonly write was accepted");finish();
         }
         for(auto a:{0x08600000u,0x04000204u,0x10000000u}){
-            reset();start(a,false);check(d.done && d.fault && !d.mem_req,"unsupported access falsely accepted");finish();
+            reset();start(a,false);check(d.done && d.fault && !d.mem_req && d.fault_addr==a,"unsupported access falsely accepted");finish();
+            start(0x04000204u,false);check(d.fault_addr==a,"first fault address overwritten");finish();
         }
         reset();start(0x02000000,false);check(d.mem_req,"missing pending request");
         reset();check(!d.mem_req && !d.done && !d.fault,"reset did not cancel request");

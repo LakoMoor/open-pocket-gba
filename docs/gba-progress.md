@@ -37,12 +37,16 @@ This is a tested, limited bring-up configuration. The full requested console is
   enables, IE/IF/IME, W1C interrupt flags and keypad OR/AND/retrigger tests.
 * Memory bus delayed acceptance/completion, byte masks, mirror translation,
   ROM write rejection, unsupported I/O/ROM-overflow faults and reset cancellation.
+* Read-only diagnostic UART: independent 8N1 waveform decode, hex encoding,
+  atomic snapshots while inputs change, periodic repeat and reset-to-idle.
+* Real HDMI Audio Clock Regeneration (no stub): exact average 48 kHz clock,
+  281/282 pixel-clock half-periods, N=6144 and CTS=27000 checked over four wraps.
 
 `bash sim/gba/board.sh`: full `gba_top` with existing behavioral board primitives
 and SDRAM pin model. Loader -> SDRAM -> CPU -> VRAM -> HDMI RGB verified for a
 691200 pixels across two board boots, including a button reset and repeat ROM
-load, approximately 266.96 ms simulated. Serializer electrical
-behavior and audio regeneration are not covered by that model.
+load, approximately 266.96 ms simulated. The real ACR module is included in the
+current test. Serializer electrical behavior is not covered by that model.
 
 CPU-generated VRAM captured from the simulated HDMI RGB input (not a physical
 capture and not a replacement pattern generator):
@@ -56,6 +60,8 @@ GBC regression checks: the original `gbc_top` and generated CPU/APU netlists
 pass Verilator elaboration/lint with the existing board simulation models;
 `fw/build.sh` completes (159668-byte firmware). These checks do not establish
 physical GBC compatibility or replace a full GBC gameplay regression run.
+After the equivalent ACR constant refactor, GBC elaboration/lint was repeated
+successfully with the real ACR module instead of the legacy simulation stub.
 
 ## Synthesis / place-and-route / physical testing
 
@@ -74,6 +80,15 @@ bitstream loaded into volatile SRAM successfully. USB3.0 UHD HDMI capture is
 currently black; the CPU/SDRAM/video path is **not hardware-validated**. Diagnosis
 continues. No persistent flash changes were made. Successful fit does not establish
 full GBA compatibility.
+
+Read-only UART telemetry, first-fault address capture and visible HDMI bring-up
+states have been added to investigate the black capture. Their RTL tests and
+two-boot board simulation pass. This newer code has **not** been loaded onto the
+physical board. Per the user's instruction, any further board programming must
+wait for an explicit approval after code checks are complete.
+Code review also found that the first GBA top tied the HDMI audio clock low.
+That defect is corrected with a clocked-silence transport and verified against
+the real ACR module. Physical behavior after that correction is not yet tested.
 
 The first BSRAM-ROM implementation failed 12 hold checks on the loader counter
 to diagnostic-ROM address paths, despite passing setup timing. The sparse 1 KiB

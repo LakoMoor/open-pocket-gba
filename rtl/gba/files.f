@@ -9,7 +9,9 @@ rtl/gba/memory/gba_memory.sv
 rtl/gba/memory/gba_sdram_arbiter.sv
 rtl/gba/gba_bringup.sv
 rtl/gba/peripherals/gba_timers_irq.sv
+rtl/gba/peripherals/gba_debug_uart.sv
 rtl/gba/video/gba_mode3_scanout.sv
+rtl/gba/video/gba_hdmi_audio_clock.sv
 rtl/sys/sdram_ctrl.sv
 rtl/hdmi/audio_clock_regeneration_packet.sv
 rtl/hdmi/audio_info_frame.sv

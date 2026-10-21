@@ -12,6 +12,7 @@ module gba_memory (
     output logic fault,
     output logic [15:0] dispcnt,
     output logic irq,
+    output logic [31:0] fault_addr,
     output logic mem_req, mem_we,
     output logic [20:0] mem_addr,
     output logic [31:0] mem_wdata,
@@ -58,12 +59,13 @@ module gba_memory (
     assign done = state == RESP && !reset;
     always_ff @(posedge clk) begin
         if (reset) begin
-            state <= IDLE; fault <= 0; dispcnt <= 16'h0080;
+            state <= IDLE; fault <= 0; fault_addr <= 0; dispcnt <= 16'h0080;
             rdata <= 0; mem_we <= 0; mem_addr <= 0; mem_be <= 0; mem_wdata <= 0;
         end else case (state)
             IDLE: if (req) begin
                 rdata <= 0;
                 if (!mapped || (io && addr[9:2] != 0 && !peripheral_selected) || (we && readonly)) begin
+                    if(!fault) fault_addr <= addr;
                     fault <= 1; state <= RESP;
                 end else if (bios) begin rdata <= boot_data; state <= RESP; end
                 else if (io) begin

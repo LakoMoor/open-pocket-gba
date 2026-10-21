@@ -14,7 +14,7 @@ Open Pocket GBC `e24e34eceee208c7266d23aad9d12d5ea8997b4e`.
 | `rtl/sys/iosys.sv` | Useful future service CPU, SPI, UART, OSD interfaces. Fixed firmware/boot and GBC register semantics prevent connecting unmodified firmware to a GBA core. Currently excluded. |
 | `rtl/sys/fb_writer.sv` | Not reusable as-is: GB LCD off/blanking semantics, 23040 pixels, 15-bit input pointer, GB frame events. The diagnostic directly scans Mode 3 VRAM. A real PPU needs its own frame-completion writer. |
 | `rtl/video/video_out.sv` | Its font/OSD/effects are reusable concepts, but its 160x144 geometry and pipeline are fixed. The diagnostic uses a tested GBA-specific 240x160, 3x scanout. |
-| `rtl/hdmi/` | Reused unchanged: 480p VIC 2, RGB888 into existing encoder/serializer, original differential output buffers. Audio path receives silence until a GBA APU exists. |
+| `rtl/hdmi/` | Reused: 480p VIC 2, RGB888 into existing encoder/serializer, original differential output buffers. Equivalent ACR constant arithmetic was factored to allow real-module simulation. Audio path receives clocked silence until a GBA APU exists. |
 | `rtl/board/` | Reuse 135 MHz HDMI PLL, 33.75 MHz system PLL, pin constraints and CLKDIV placement. GBA has separate, correct 27/135 MHz timing constraints. |
 | `fw/src/`, `fw/fatfs/` | Preserve existing loader, GBCP flash layout, save formats, menu and FatFs R0.16. A GBA service configuration is still required; simply accepting `.gba` in the GB loader would corrupt its mapper/loading assumptions. |
 | `build.sh`, `flash.sh` | Add `gba_top` source list and strict timing; retain existing GBC command behavior. Flash helper remains GBC by default; SRAM-only GBA instructions below. |
@@ -81,6 +81,33 @@ supplies 16.777216 MHz timer enables from 33.75 MHz regardless of CPU stalls.
 Key inputs reuse the GBC GPIO mapping (L/R currently unavailable). Prescaler phase
 on enable and simultaneous event/write edge cases still need hardware-suite tests.
 
+## Bring-up observability
+
+The top emits a read-only 128-bit UART snapshot every quarter second at 115200
+8N1 on the existing board TX pin (69): status, current fetch PC, fetched bus word,
+and first unsupported-access address. Each packet is 32 hexadecimal digits plus
+LF. `python tools/gba_debug.py --port COM6` reads it without sending commands;
+`--line HEX` decodes a saved packet offline. PC and fetched word are pipeline
+observations, not an instruction-retirement trace. The UART never controls the
+CPU or memory bus. A serial waveform bench checks framing and snapshot atomicity.
+
+Status bit 0 is reset, 1 Thumb, 2 memory fault, 3 diagnostic complete, 4 loader
+complete, 5 SDRAM ready, 6 system PLL lock, 7 HDMI PLL lock, 8 scanout underrun;
+bits 31:16 carry signature 0x4742. The first fault address remains stable until
+reset. HDMI shows dark blue while executing, dark red on an unsupported access,
+and the CPU-generated frame after completion. These status colors diagnose
+bring-up; they do not stand in for a working game or PPU.
+
+Hardware programming requires the user's explicit approval after the code and
+checks are ready. Test scripts build/simulate only; they never program the board.
+
+The HDMI transport receives an actual average 48 kHz clock, generated as 4/1125
+pixel-clock half-cycle enables at 27 MHz, even while the audio sample is silence.
+The first diagnostic had tied this clock low, leaving ACR inactive. An independent
+test now exercises the real ACR module and checks N=6144, CTS=27000 and 281/282
+pixel half-periods. This fixes a transport defect, not the missing GBA APU; its
+effect on the physical black-screen observation remains unverified.
+
 ## Commands
 
 ```sh
@@ -93,8 +120,9 @@ bash sim/gba/board.sh
 
 Logs/results are under `build/gba/`, FPGA artifacts under `build/gba_top/`.
 The `board.sh` test uses the existing SDRAM pin model and behavioral PLL/serializer
-models. The HDMI audio-clock regeneration packet is the existing simulation stub;
-the RGB/frame timing path is real. TMDS electrical behavior is not simulated.
+models, with the real HDMI audio-clock regeneration module. The older GBC bench
+retains its original ACR stub, but GBC elaboration/lint was also checked with the
+real module. TMDS electrical behavior is not simulated.
 
 For a deliberate, volatile board test after review:
 

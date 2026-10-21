@@ -34,3 +34,16 @@ $V --cc --exe -O2 -Wno-fatal --top-module gba_memory \
   rtl/gba/peripherals/gba_timers_irq.sv "$(pwd)/sim/gba/memory_tb.cpp" >build/gba/memory-verilator.log 2>&1
 $MAKE -s -j4 -C build/gba/memory -f Vgba_memory.mk >build/gba/memory-compile.log 2>&1
 build/gba/memory/Vgba_memory | tee build/gba/memory-results.txt
+mkdir -p build/gba/uart
+$V --cc --exe -O2 -Wno-fatal --top-module gba_uart_test \
+  --Mdir build/gba/uart rtl/gba/peripherals/gba_debug_uart.sv sim/gba/uart.sv \
+  "$(pwd)/sim/gba/uart_tb.cpp" >build/gba/uart-verilator.log 2>&1
+$MAKE -s -j4 -C build/gba/uart -f Vgba_uart_test.mk >build/gba/uart-compile.log 2>&1
+build/gba/uart/Vgba_uart_test | tee build/gba/uart-results.txt
+mkdir -p build/gba/audio-clock
+$V --cc --exe -O2 -Wno-fatal --top-module gba_audio_clock_test \
+  --Mdir build/gba/audio-clock rtl/gba/video/gba_hdmi_audio_clock.sv \
+  rtl/hdmi/audio_clock_regeneration_packet.sv sim/gba/audio_clock.sv \
+  "$(pwd)/sim/gba/audio_clock_tb.cpp" >build/gba/audio-clock-verilator.log 2>&1
+$MAKE -s -j4 -C build/gba/audio-clock -f Vgba_audio_clock_test.mk >build/gba/audio-clock-compile.log 2>&1
+build/gba/audio-clock/Vgba_audio_clock_test | tee build/gba/audio-clock-results.txt
