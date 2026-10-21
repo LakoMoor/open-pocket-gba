@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
+<header><div class="navpill">
   <div class="logo">Open Pocket <span>Studio</span></div>
   <nav>
     <button class="tab on" data-tab="install">Install</button>
@@ -16,14 +16,14 @@
     <button class="tab" data-tab="log">Log</button>
   </nav>
   <div class="badge"><div class="dot" id="dot"></div><span id="status">looking for the board…</span></div>
-</header>
+</div></header>
 
 <main>
   <!-- install over USB -->
   <section class="page on" id="p-install">
     <div class="col">
-      <h1>Install over USB</h1>
-      <p class="sub">Writes to the board's flash with openFPGALoader. The board restarts on its own.</p>
+      <h1>Install</h1>
+      <p class="sub">Firmware and FPGA bitstream over USB. The board restarts on its own when it is done.</p>
       <div class="seg" id="src">
         <button class="on" data-src="release">Latest release</button>
         <button data-src="build">This checkout</button>
@@ -38,7 +38,7 @@
       <div class="msg" id="msg"></div>
     </div>
     <aside class="col side">
-      <div class="art"><div class="device"><div class="screen-art"><b>OPEN</b><b class="big">POCKET</b></div></div></div>
+      <div class="art"><div class="device"><canvas id="art" width="160" height="144"></canvas><div class="brand">Open Pocket <span style="color:#a6a6a6">GBC</span></div></div></div>
       <p class="hint">USB cable to the Tang Nano 20K. If writing stops with "bulk write failed", replug the cable and try again: a failed write can always be repeated, the board is never bricked.</p>
     </aside>
   </section>
@@ -46,7 +46,7 @@
   <!-- SD card update -->
   <section class="page" id="p-sd">
     <div class="col">
-      <h1>Update from an SD card</h1>
+      <h1>SD card</h1>
       <p class="sub">Puts opgbc_fw.bin and opgbc_fpga.bin on the card. On the board: Menu › System › System Update.</p>
       <div class="seg" id="sdsrc">
         <button class="on" data-src="release">Latest release</button>

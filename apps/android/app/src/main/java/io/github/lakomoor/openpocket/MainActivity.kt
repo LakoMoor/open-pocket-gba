@@ -43,15 +43,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val Bg = Color(0xFF0D0F17)
-private val Panel = Color(0xFF151925)
-private val Panel2 = Color(0xFF1D2232)
-private val Line = Color(0xFF2A3046)
-private val Text = Color(0xFFEEF0F6)
-private val Dim = Color(0xFF8A91A8)
-private val Accent = Color(0xFF3A6FF0)
-private val Ok = Color(0xFF9BBC0F)
-private val PillC = Color(0xFFF2F2EE)
+// after Analogue's design language: black canvas, white type, greys, no brand colour
+private val Bg = Color(0xFF000000)
+private val Panel = Color(0xFF1C1C1C)
+private val Panel2 = Color(0xFF1C1C1C)
+private val Line = Color(0xFF2A2A2A)
+private val Text = Color(0xFFFFFFFF)
+private val Dim = Color(0xFF7A7A7A)
+private val Accent = Color(0xFFFFFFFF)
+private val Ok = Color(0xFFEDEDED)
+private val PillC = Color(0xFFFFFFFF)
 
 class MainActivity : ComponentActivity() {
     private val usbReceiver = object : BroadcastReceiver() {
@@ -87,7 +88,7 @@ fun App() {
     MaterialTheme(colorScheme = darkColorScheme(background = Bg, surface = Panel, primary = Accent)) {
         Column(Modifier.fillMaxSize().background(Bg).systemBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Open Pocket", color = Text, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+                Text("Open Pocket", color = Text, fontWeight = FontWeight.Medium, fontSize = 17.sp, letterSpacing = (-0.5).sp)
                 Spacer(Modifier.width(10.dp))
                 Spacer(Modifier.weight(1f))
                 Row(Modifier.clip(RoundedCornerShape(50)).background(Panel2).clickable { Board.connect(ctx) }
@@ -191,7 +192,7 @@ fun RemoteScreen() {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
             Key('S', "SELECT", Modifier.height(40.dp).width(92.dp), pill = true)
             Spacer(Modifier.width(10.dp))
-            Key('M', "MENU", Modifier.height(40.dp).width(80.dp), pill = true, color = Accent)
+            Key('M', "MENU", Modifier.height(40.dp).width(80.dp), pill = true)
             Spacer(Modifier.width(10.dp))
             Key('T', "START", Modifier.height(40.dp).width(92.dp), pill = true)
         }
@@ -231,7 +232,7 @@ private fun Pill(text: String, primary: Boolean = false, enabled: Boolean = true
     Box(Modifier.clip(RoundedCornerShape(50)).background(if (primary) Accent else Color.Transparent)
         .border(1.dp, if (primary) Accent else Line, RoundedCornerShape(50))
         .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 18.dp, vertical = 11.dp)) {
-        Text(text, color = if (enabled) Text else Dim, fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Normal)
+        Text(text, color = if (!enabled) Dim else if (primary) Color.Black else Text, fontWeight = if (primary) FontWeight.Medium else FontWeight.Normal, letterSpacing = (-0.3).sp)
     }
 }
 
@@ -260,7 +261,7 @@ fun UpdateScreen() {
         }
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-        Text("Update", color = Text, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text("Update", color = Text, fontSize = 44.sp, fontWeight = FontWeight.Medium, letterSpacing = (-2).sp)
         Text("Downloads the latest release and writes it to an SD card. The board installs it from the card: Menu › System › System Update.",
             color = Dim, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp))
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp)) {
@@ -288,7 +289,7 @@ fun UpdateScreen() {
             Spacer(Modifier.height(16.dp))
             Text("$n  ${(p * 100).toInt()}%", color = Dim, fontSize = 13.sp)
             Spacer(Modifier.height(6.dp))
-            LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(50)), color = Accent, trackColor = Panel2)
+            LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)), color = Color.White, trackColor = Panel2)
         }
         if (result.isNotEmpty()) {
             Spacer(Modifier.height(14.dp))

@@ -180,8 +180,31 @@ function log(t) {
 S.on('log', log);
 S.on('status', status);
 
+// the dot-matrix accent: OPEN POCKET in the board's own font, one round dot per pixel
+function drawArt() {
+  const c = $('#art'), g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
+  const lines = [['OPEN', 2, 34], ['POCKET', 3, 62]];
+  for (const [txt, sc, y0] of lines) {
+    const w = txt.length * 8 * sc, x0 = (c.width - w) / 2;
+    for (let i = 0; i < txt.length; i++) {
+      const code = txt.charCodeAt(i);
+      for (let fy = 0; fy < 8; fy++) for (let fx = 0; fx < 8; fx++) {
+        if (!((font[code * 8 + fy] >> (7 - fx)) & 1)) continue;
+        g.fillStyle = '#fff';
+        g.beginPath();
+        g.arc(x0 + (i * 8 + fx) * sc + sc / 2, y0 + fy * sc + sc / 2, sc * 0.42, 0, 6.3);
+        g.fill();
+      }
+    }
+  }
+  g.fillStyle = '#7a7a7a'; g.font = '10px sans-serif'; g.textAlign = 'center';
+  g.fillText('PRESS START', c.width / 2, 124);
+}
+
 (async () => {
   font = (await S.font()).split(/\r?\n/).filter(Boolean).map(h => parseInt(h, 16));
+  drawArt();
   status();
   setInterval(status, 5000);
   release = await S.releaseInfo();
