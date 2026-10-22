@@ -20,7 +20,7 @@ module gba_board_sim (
     assign vid_clk=board.clk_p;
     assign cx=board.cx;
     assign cy=board.cy;
-    assign rgb=board.rgb;
+    assign rgb=board.hdmi_rgb;
     assign done=board.demo_done;
     assign fault=board.fault;
     assign underrun=board.underrun;

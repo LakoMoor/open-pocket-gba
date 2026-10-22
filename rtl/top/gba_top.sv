@@ -4,6 +4,7 @@
 module gba_top (
     input sys_clk, s1,
     input [7:0] key_n,
+    output uart_tx,
     output [1:0] led,
     output tmds_clk_p,tmds_clk_n,
     output [2:0] tmds_d_p,tmds_d_n,
@@ -46,6 +47,7 @@ module gba_top (
     wire [31:0] core_wdata;
     wire [3:0] core_be;
     wire [15:0] dispcnt;
+    wire [31:0] debug_pc,debug_instruction,fault_addr;
     wire [31:0] lp_rdata;
     logic [7:0] keys_s1,keys_s2;
     always_ff @(posedge clk_sys) begin keys_s1<=~key_n;keys_s2<=keys_s1;end
@@ -54,7 +56,8 @@ module gba_top (
         .keys(keys),
         .mem_req(core_req),.mem_we(core_we),.mem_addr(core_addr),.mem_wdata(core_wdata),.mem_be(core_be),
         .mem_ack(core_ack && running),.mem_rvalid(core_rvalid && running),.mem_rdata(lp_rdata),
-        .fault(fault),.thumb(thumb),.dispcnt(dispcnt));
+        .fault(fault),.thumb(thumb),.dispcnt(dispcnt),
+        .debug_pc(debug_pc),.debug_instruction(debug_instruction),.fault_addr(fault_addr));
     always_ff @(posedge clk_sys) begin
         if (reset) begin load_index <= 0; running <= 0; demo_done <= 0; end
         else begin
@@ -70,9 +73,21 @@ module gba_top (
     wire [20:0] video_addr;
     wire [9:0] cx,cy;
     wire [23:0] rgb;
+    wire [23:0] hdmi_rgb;
+    logic [1:0] fault_p=0,done_p=0,underrun_s=0;
+    always_ff @(posedge clk_p) begin fault_p<={fault_p[0],fault};done_p<={done_p[0],demo_done};end
+    always_ff @(posedge clk_sys) underrun_s<={underrun_s[0],underrun};
+    // A visible bring-up state distinguishes CPU/memory failure from no HDMI sync.
+    assign hdmi_rgb=fault_p[1] ? 24'ha00000 : done_p[1] ? rgb : 24'h000040;
+    wire [31:0] debug_status={16'h4742,7'd0,underrun_s[1],hdmi_lock,gb_lock,sdram_ready,
+                             running,demo_done,fault,thumb,reset};
+    gba_debug_uart debug_uart(.clk(clk_sys),.reset(reset),
+        .snapshot({debug_status,debug_pc,debug_instruction,fault_addr}),.tx(uart_tx));
     gba_mode3_scanout scanout(.clk(clk_sys),.reset(reset),.video_req(video_req),.video_addr(video_addr),
         .video_ack(video_ack),.video_rvalid(video_rvalid),.video_rdata(lp_rdata),
-        .vclk(clk_p),.vreset(vreset),.enable(demo_done),.cx(cx),.cy(cy),.rgb(rgb),.underrun(underrun));
+        .vclk(clk_p),.vreset(vreset),
+        .enable(demo_done && dispcnt[2:0]==3 && dispcnt[10] && !dispcnt[7]),
+        .cx(cx),.cy(cy),.rgb(rgb),.underrun(underrun));
     wire lp_req,lp_we,lp_ack,lp_rvalid;
     wire [20:0] lp_addr;
     wire [31:0] lp_wdata;
@@ -95,12 +110,14 @@ module gba_top (
     // HDMI is reused intact. Silence is intentional: no GBA APU is present.
     wire [15:0] silence[1:0];
     assign silence[0]=0; assign silence[1]=0;
+    wire clk_audio_p;
+    gba_hdmi_audio_clock audio_clock(.clk(clk_p),.reset(vreset),.audio_clk(clk_audio_p));
     wire [2:0] tmds;
     wire tmds_clock;
     hdmi #(.VIDEO_ID_CODE(2),.BIT_WIDTH(10),.DVI_OUTPUT(0),.AUDIO_RATE(48000),
         .VENDOR_NAME({"OpenGBA",8'd0}),.PRODUCT_DESCRIPTION({"GBA bringup",40'd0}))
-    u_hdmi(.clk_pixel_x5(clk_p5),.clk_pixel(clk_p),.clk_audio(1'b0),.reset(vreset),
-        .rgb(rgb),.audio_sample_word(silence),.tmds(tmds),.tmds_clock(tmds_clock),
+    u_hdmi(.clk_pixel_x5(clk_p5),.clk_pixel(clk_p),.clk_audio(clk_audio_p),.reset(vreset),
+        .rgb(hdmi_rgb),.audio_sample_word(silence),.tmds(tmds),.tmds_clock(tmds_clock),
         .cx(cx),.cy(cy),.frame_width(),.frame_height(),.screen_width(),.screen_height());
     TLVDS_OBUF u_obuf[3:0](.I({tmds_clock,tmds}),.O({tmds_clk_p,tmds_d_p}),.OB({tmds_clk_n,tmds_d_n}));
     assign led = {~fault,~demo_done};

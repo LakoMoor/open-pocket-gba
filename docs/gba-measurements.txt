@@ -1,38 +1,59 @@
-Open Pocket GBA logic-ROM diagnostic: 2026-10-21 build, inspected 2026-10-22
+Open Pocket GBA measured diagnostic results
+Code revision: de37727a0d8631537ce67c9a3818090cd824d88f
+Build source fingerprint (LF normalized): 301f488da943aed83e83440eb4fe04a2d747fb11a5e180958ce0b1ece9f50e8b
 Full GBA compatibility: NOT implemented
 
 Yosys 0.70+157 (git sha1 af9f71e51, Release, GNU /usr/bin/x86_64-w64-mingw32-g++ 15.2.1)
 "nextpnr-himbaechel" -- Next Generation Place and Route (Version nextpnr-0.11.1-64-g7ba06cae)
 Verilator 5.053 devel rev v5.052-460-g8668340f4 (mod)
 
-Build: SEEDS=1 bash build.sh gba_top; strict timing; no timing-allow-fail
-Info: 	                LUT4:    9532/  20736    45%
-Info: 	                 DFF:    2229/  15552    14%
-Info: 	               BSRAM:       1/     46     2%
-Info: Max frequency for clock   'clk_p': 119.77 MHz (PASS at 27.00 MHz)
-Info: Max frequency for clock 'clk_sys': 83.19 MHz (PASS at 33.75 MHz)
-Info: Max frequency for clock   'clk_p': 188.22 MHz (PASS at 27.00 MHz)
-Info: Max frequency for clock 'clk_sys': 85.22 MHz (PASS at 33.75 MHz)
-1 warning, 0 errors
-Info: Program finished normally.
-
-Bitstream: 7263596 bytes
-SHA256: 8f7e6bbd9031c7b4b0a551d7d36d3874cca5e3cd5502c91bc85a126312b288db
-
-Verilator results:
-PASS seed=1 reboot=0 clocks=4111720 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
-PASS seed=1 reboot=1 clocks=4111720 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
-PASS seed=17 reboot=0 clocks=4110115 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
-PASS seed=17 reboot=1 clocks=4110115 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
-PASS seed=123 reboot=0 clocks=4106016 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
-PASS seed=123 reboot=1 clocks=4106016 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+[cpu]
+PASS seed=1 reboot=0 clocks=4507539 DMA-held=114 ARM/Thumb/SWI/timer+VBlank+DMA IRQ/Thumb IRQ return/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=1 reboot=1 clocks=4507539 DMA-held=114 ARM/Thumb/SWI/timer+VBlank+DMA IRQ/Thumb IRQ return/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=17 reboot=0 clocks=4507747 DMA-held=106 ARM/Thumb/SWI/timer+VBlank+DMA IRQ/Thumb IRQ return/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=17 reboot=1 clocks=4507747 DMA-held=106 ARM/Thumb/SWI/timer+VBlank+DMA IRQ/Thumb IRQ return/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=123 reboot=0 clocks=4503370 DMA-held=122 ARM/Thumb/SWI/timer+VBlank+DMA IRQ/Thumb IRQ return/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=123 reboot=1 clocks=4503370 DMA-held=122 ARM/Thumb/SWI/timer+VBlank+DMA IRQ/Thumb IRQ return/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+[components]
 PASS address decode: 18 boundary/mirror/overflow cases
 PASS reboot=0 691200 HDMI pixels, 3x RGB555, dual clocks, 223931 competing CPU reads, no underrun
 PASS reboot=1 691200 HDMI pixels, 3x RGB555, dual clocks, 223931 competing CPU reads, no underrun
-PASS timers: /1 /64 /256 /1024, four-way cascade, reload/restart/byte enables, IE/IF/IME, keypad OR/AND/retrigger
-PASS memory bus: byte masks, mirrors, delayed accept/read completion, no duplicate requests, ROM/unsupported faults, reset cancellation
+[peripherals]
+PASS timers: /1 /64 /256 /1024, four-way cascade, reload/restart/byte enables, IE/IF/IME, keypad OR/AND/retrigger, video flags/masking/event-over-W1C
+[memory]
+PASS memory bus: byte masks, mirrors, delayed accept/read completion, no duplicate requests, ROM/unsupported faults, reset cancellation; LCD status/IE/IF/IME across 410000 stalled SDRAM clocks
+[dma]
+PASS DMA: 24 width/address-mode combinations, random bus stalls, halfword lanes, repeat/reload, 4-channel priority/preemption, two-tick startup, 16384/65536 counts, byte writes, masks, IRQ, unsupported modes, abort/reset; 1066619 clocks
+[dma-memory]
+PASS DMA memory integration: CPU response ownership/blocking including VBlank during 500000-clock CPU read, 32-word copy under random SDRAM latency, IE/IF/IME, 160 visible HBlanks and VBlank exclusion, VBlank start, IO halfword write, readonly/self-register/unsupported faults; 1445369 clocks
+[video-timing]
+PASS video timing: 3 frames/842688 GBA ticks, 2949408 system clocks; 684 HBlank/3 VBlank/3 VCount edges, line 227, byte masks, compare writes, enable gating, reset
+[uart]
+PASS UART: 8N1 timing, hex encoding, atomic snapshot, periodic repeat, reset idle
+[audio-clock]
+PASS HDMI audio clock: 48 kHz average, 281/282 half-periods, real ACR module N=6144 CTS=27000, reset
+[board]
 PASS gba_top: boot loader + real sdram_ctrl + SDRAM pin model + CPU homebrew + 691200 HDMI RGB pixels across two board boots; 266956 us simulated
 
-GBC: original RTL/netlists pass Verilator elaboration/lint; existing fw/build.sh completes (159668 bytes).
-Physical: GW2AR-18 detected; SRAM load succeeds; USB3.0 UHD capture is black. Hardware functionality NOT validated.
-No persistent flash writes. No commercial games, external suites or mGBA comparison executed.
+Listed RTL tests: PASS
+
+Strict routed/packed artifact: PASS
+Timing log: build\gba_top\nextpnr.log
+Netlist newer than build sources: True
+Command: SEEDS=1 bash build.sh gba_top; default GBA flow rejects timing failures.
+Info: 	                LUT4:   13104/  20736    63%
+Info: 	                 DFF:    3655/  15552    23%
+Info: 	               BSRAM:       1/     46     2%
+Info: Max frequency for clock   'clk_p': 125.38 MHz (PASS at 27.00 MHz)
+Info: Max frequency for clock 'clk_sys': 61.87 MHz (PASS at 33.75 MHz)
+Info: Max frequency for clock   'clk_p': 112.01 MHz (PASS at 27.00 MHz)
+Info: Max frequency for clock 'clk_sys': 56.32 MHz (PASS at 33.75 MHz)
+1 warning, 0 errors
+Info: Program finished normally.
+Bitstream: 7263596 bytes
+SHA256: 87b42bb70d3fd60aec27a1617a8476fdf75c09b3d9e96e96fe7004d33beff831
+
+Physical status: the earlier logic-ROM diagnostic loaded into SRAM but HDMI capture was black.
+The current DMA/LCD-timing/UART/audio-clock revision has NOT been loaded. Explicit user approval is required.
+No persistent flash writes. No commercial-game, external-suite or mGBA comparison results.
+GBC: existing firmware build passed; elaboration/lint with real shared ACR passed.

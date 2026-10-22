@@ -1,0 +1,38 @@
+Open Pocket GBA logic-ROM diagnostic: 2026-10-21 build, inspected 2026-10-22
+Full GBA compatibility: NOT implemented
+
+Yosys 0.70+157 (git sha1 af9f71e51, Release, GNU /usr/bin/x86_64-w64-mingw32-g++ 15.2.1)
+"nextpnr-himbaechel" -- Next Generation Place and Route (Version nextpnr-0.11.1-64-g7ba06cae)
+Verilator 5.053 devel rev v5.052-460-g8668340f4 (mod)
+
+Build: SEEDS=1 bash build.sh gba_top; strict timing; no timing-allow-fail
+Info: 	                LUT4:    9532/  20736    45%
+Info: 	                 DFF:    2229/  15552    14%
+Info: 	               BSRAM:       1/     46     2%
+Info: Max frequency for clock   'clk_p': 119.77 MHz (PASS at 27.00 MHz)
+Info: Max frequency for clock 'clk_sys': 83.19 MHz (PASS at 33.75 MHz)
+Info: Max frequency for clock   'clk_p': 188.22 MHz (PASS at 27.00 MHz)
+Info: Max frequency for clock 'clk_sys': 85.22 MHz (PASS at 33.75 MHz)
+1 warning, 0 errors
+Info: Program finished normally.
+
+Bitstream: 7263596 bytes
+SHA256: 8f7e6bbd9031c7b4b0a551d7d36d3874cca5e3cd5502c91bc85a126312b288db
+
+Verilator results:
+PASS seed=1 reboot=0 clocks=4111720 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=1 reboot=1 clocks=4111720 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=17 reboot=0 clocks=4110115 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=17 reboot=1 clocks=4110115 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=123 reboot=0 clocks=4106016 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS seed=123 reboot=1 clocks=4106016 ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores
+PASS address decode: 18 boundary/mirror/overflow cases
+PASS reboot=0 691200 HDMI pixels, 3x RGB555, dual clocks, 223931 competing CPU reads, no underrun
+PASS reboot=1 691200 HDMI pixels, 3x RGB555, dual clocks, 223931 competing CPU reads, no underrun
+PASS timers: /1 /64 /256 /1024, four-way cascade, reload/restart/byte enables, IE/IF/IME, keypad OR/AND/retrigger
+PASS memory bus: byte masks, mirrors, delayed accept/read completion, no duplicate requests, ROM/unsupported faults, reset cancellation
+PASS gba_top: boot loader + real sdram_ctrl + SDRAM pin model + CPU homebrew + 691200 HDMI RGB pixels across two board boots; 266956 us simulated
+
+GBC: original RTL/netlists pass Verilator elaboration/lint; existing fw/build.sh completes (159668 bytes).
+Physical: GW2AR-18 detected; SRAM load succeeds; USB3.0 UHD capture is black. Hardware functionality NOT validated.
+No persistent flash writes. No commercial games, external suites or mGBA comparison executed.

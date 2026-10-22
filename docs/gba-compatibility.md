@@ -5,15 +5,16 @@ ARM/Thumb + SDRAM + Mode 3 diagnostic, not a replacement for a complete GBA.
 
 | Requirement | Implemented / verified state |
 |---|---|
-| ARM/Thumb execution | GBATang-derived RTL; original mixed-mode ROM executed in Verilator. Arithmetic/conditional execution, SWI and timer IRQ return, SPSR and odd LDRH exercised; not exhaustive ARMv4T verification. |
+| ARM/Thumb execution | GBATang-derived RTL; original mixed-mode ROM executed in Verilator. Arithmetic/conditional execution, SWI, timer/VBlank IRQ in ARM, DMA IRQ/return in Thumb, SPSR and odd LDRH exercised; not exhaustive ARMv4T verification. |
 | BIOS | Original diagnostic vectors only. No compatible BIOS integration. |
 | Memory map | Physical backing, region bounds, mirrors and byte masks; CPU VRAM/IWRAM/EWRAM traffic tested. Hardware bus-width/open-bus/BIOS protection behavior incomplete. |
 | GBA clock / waitstates | Timers use fractional 16.777216 MHz enables; CPU pipeline advances on memory completion. WAITCNT, prefetch and cycle accuracy absent. |
 | Video | Static Mode 3 VRAM scanout with pixel-perfect 3x, RGB555 to 720x480 HDMI. CPU-generated homebrew frame checked pixel by pixel. |
-| PPU modes 0–5 | Full PPU absent, including GBA scanline timing, modes 0/1/2/4/5, text/affine, sprites/priority, windows, mosaic, alpha/brightness. HDMI scanout is not evidence of a full Mode 3 PPU. |
+| LCD status / timing | DISPSTAT/VCOUNT, 1232 clocks/line, 228 lines/frame and VBlank/HBlank/VCount IRQs implemented. Blank-start strobes drive DMA; HBlank DMA is suppressed on hidden lines. Three-frame timing bench and ARM VBlank handler tested. Not yet connected to a native pixel renderer. |
+| PPU modes 0–5 | Full PPU absent: modes 0/1/2/4/5, text/affine, sprites/priority, windows, mosaic, alpha/brightness. HDMI scanout is not evidence of a full Mode 3 PPU. |
 | Display settings / OSD / FPS | Not integrated. Existing GBC implementation preserved. |
-| DMA0–3 | Absent; no dummy registers acknowledge access. |
-| Timers / IRQ | Four prescaled/cascaded timers, reload/start, IE/IF/IME, timer IRQ and keypad IRQ tested. Video/DMA/audio IRQ sources absent. Edge-cycle hardware accuracy unverified. |
+| DMA0–3 | Ordinary 16/32-bit immediate/VBlank/visible-HBlank transfers, address modes, repeat/reload, zero-count maxima, priority between read/write pairs, CPU hold and completion IRQ implemented/tested. Two GBA tick startup; remaining bus/priority timing is not cycle accurate. FIFO, video capture and cartridge DRQ are rejected with a diagnostic fault. Write-only register/open-bus readback, BIOS DMA and self-register accesses are not modeled. |
+| Timers / IRQ | Four prescaled/cascaded timers, reload/start, IE/IF/IME, timer, keypad, video and DMA IRQs tested. IF event wins over simultaneous acknowledgment. Audio absent. Edge-cycle hardware accuracy unverified. |
 | Keypad | KEYINPUT/KEYCNT with GPIO inputs and OR/AND edge-trigger IRQ logic; simulation tests pass. Physical buttons untested; L/R not wired. |
 | PSG / Direct Sound / FIFO | Absent; HDMI emits no GBA audio. |
 | Cartridge ROM | Boot-time embedded 1 KiB original diagnostic copied to SDRAM. General SD/flash ROM loader, caching and 32 MiB cartridge backing absent. |

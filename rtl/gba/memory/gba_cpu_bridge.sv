@@ -4,6 +4,7 @@
 // Serializes simultaneous instruction and data requests without duplicating stores.
 module gba_cpu_bridge (
     input logic clk, reset,
+    input logic hold_cpu,
     input logic rom_en, ram_cen, ram_wen,
     input logic [31:0] rom_addr, ram_addr, ram_wdata,
     input logic [3:0] ram_be,
@@ -19,7 +20,7 @@ module gba_cpu_bridge (
     state_t state;
     logic data_pending, fetch_pending;
     logic [31:0] next_rom, next_ram;
-    assign cpu_en = state == STEP && !reset;
+    assign cpu_en = state == STEP && !reset && !hold_cpu;
     assign req = (state == FETCH || state == DATA) && !reset;
     assign addr = state == FETCH ? rom_addr : ram_addr;
     assign we = state == DATA && ram_wen;
@@ -44,7 +45,7 @@ module gba_cpu_bridge (
                 state <= data_pending ? DATA : STEP;
             end
             DATA: if (done) begin next_ram <= rdata; state <= STEP; end
-            STEP: begin
+            STEP: if (!hold_cpu) begin
                 if (fetch_pending) rom_data <= next_rom;
                 if (data_pending) ram_rdata <= next_ram;
                 state <= IDLE;

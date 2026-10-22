@@ -20,4 +20,6 @@ Whitespace is normalized in both imported files; author notices are preserved.
 Other GBA modules and the diagnostic program are new GPL-3.0-or-later code.
 
 MiSTer GBA, Cult-of-GBA BIOS, mGBA suite and gba-tests were inspected but are not
-imported. Existing GBC/HDMI/FatFs source and notices remain unchanged.
+imported. Existing GBC/FatFs source and notices remain unchanged. The shared HDMI
+ACR module retains its author notice; an equivalent integer constant expression
+was factored for Verilator compatibility (2026-10-22).
