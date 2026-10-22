@@ -35,7 +35,15 @@ module gba_memory (
     end
     wire peripheral_selected;
     wire [31:0] peripheral_rdata;
+    wire video_selected;
+    wire [31:0] video_rdata;
+    wire [2:0] video_events;
+    gba_video_timing video_timing(.clk(clk),.reset(reset),.ce(tick),
+        .access(state==IDLE && req && io),.we(we),.addr(addr[9:0]),.wdata(wdata),.be(be),
+        .selected(video_selected),.rdata(video_rdata),.irq_events(video_events),
+        .hblank_start(),.vblank_start(),.vcount(),.line_cycle());
     gba_timers_irq peripherals(.clk(clk),.reset(reset),.ce(tick),.keys(keys),
+        .video_events(video_events),
         .access(state==IDLE && req && io),.we(we),.addr(addr[9:0]),.wdata(wdata),.be(be),
         .selected(peripheral_selected),.rdata(peripheral_rdata),.irq(irq),.overflow());
     // Original diagnostic vector table: no Nintendo BIOS or BIOS replacement.
@@ -64,12 +72,12 @@ module gba_memory (
         end else case (state)
             IDLE: if (req) begin
                 rdata <= 0;
-                if (!mapped || (io && addr[9:2] != 0 && !peripheral_selected) || (we && readonly)) begin
+                if (!mapped || (io && addr[9:2] != 0 && !peripheral_selected && !video_selected) || (we && readonly)) begin
                     if(!fault) fault_addr <= addr;
                     fault <= 1; state <= RESP;
                 end else if (bios) begin rdata <= boot_data; state <= RESP; end
                 else if (io) begin
-                    rdata <= peripheral_selected ? peripheral_rdata : {16'd0,dispcnt};
+                    rdata <= video_selected ? video_rdata : peripheral_selected ? peripheral_rdata : {16'd0,dispcnt};
                     if (we && addr[9:2]==0) begin
                         if (be[0]) dispcnt[7:0] <= wdata[7:0];
                         if (be[1]) dispcnt[15:8] <= wdata[15:8];

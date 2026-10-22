@@ -32,7 +32,22 @@ arm = [0xe3a00b01, 0xe3800003,             # 0x0403: BG2 enable + Mode 3
 wait = 0xc0 + len(arm)*4
 arm += [0xe593600c,0xe3560001]             # wait for the real IRQ handler
 at = 0xc0 + len(arm)*4
-arm += [0x1a000000 | (((wait-at-8)//4)&0xffffff), (2,0x08000201),0xe12fff12]
+arm += [0x1a000000 | (((wait-at-8)//4)&0xffffff)]
+# Verify a second exception from the native LCD clock, independent of timer0.
+arm += [0xe3a06301,                       # r6 = IO
+        0xe3a07000,0xe5867100,            # stop timer0
+        0xe583700c,                      # clear IWRAM IRQ marker
+        0xe3a07001,0xe5867200,            # IE = VBlank only
+        0xe3a07807,0xe5867200,            # IF W1C low three flags, IE becomes 0
+        0xe3a07001,0xe5867200,            # restore IE = VBlank
+        0xe3a07008,0xe1c670b4,            # DISPSTAT: VBlank IRQ enable
+        0xe3a07001,0xe5867208]            # IME = 1
+wait = 0xc0 + len(arm)*4
+arm += [0xe593700c,0xe3570001]
+at = 0xc0 + len(arm)*4
+arm += [0x1a000000 | (((wait-at-8)//4)&0xffffff),
+        0xe5967004,0xe5837010,            # save DISPSTAT/VCOUNT at IRQ return
+        (2,0x08000201),0xe12fff12]
 pool = 0xc0 + len(arm)*4
 for i, value in enumerate(arm):
     at = 0xc0+i*4
@@ -69,7 +84,9 @@ for at, reg, value in fixups:
     half(at, 0x4800 | reg << 8 | offset//4)
     word(pc, value); pc += 4
 out = ROOT/'fw/gba/diagnostic.hex'
-out.write_text(''.join(f'{value:08x}\n' for value, in struct.iter_unpack('<I', image)))
+hex_text = ''.join(f'{value:08x}\n' for value, in struct.iter_unpack('<I', image))
+if not out.exists() or out.read_text() != hex_text:
+    out.write_text(hex_text)
 (ROOT/'build/gba').mkdir(parents=True, exist_ok=True)
 (ROOT/'build/gba/diagnostic.gba').write_bytes(image)
 print(f'{out}: {len(image)} bytes, ARM + Thumb, generated')

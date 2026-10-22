@@ -40,6 +40,19 @@ int main(int argc,char**argv){
         reset();start(0x02000000,false);check(d.mem_req,"missing pending request");
         reset();check(!d.mem_req && !d.done && !d.fault,"reset did not cancel request");
         start(0,false);check(d.done && !d.fault,"reboot failed");finish();
-        std::cout<<"PASS memory bus: byte masks, mirrors, delayed accept/read completion, no duplicate requests, ROM/unsupported faults, reset cancellation\n";
+        // LCD IRQs continue while the CPU is blocked on an unaccepted SDRAM read.
+        reset();start(0x04000004,true,(73<<8)|0x38,3);finish();
+        start(0x04000200,true,7,3);finish();start(0x04000208,true,1,1);finish();
+        start(0x02000000,false);d.req=0;
+        for(unsigned n=0;n<410000;n++)tick();
+        check(d.mem_req && !d.done && d.irq && !d.fault,"SDRAM stall stopped LCD IRQ clock");
+        d.mem_ack=1;tick();d.mem_ack=0;d.mem_rvalid=1;d.mem_rdata=0x12345678;tick();finish();
+        start(0x04000004,false);
+        check((d.rdata>>16)>=160 && (d.rdata>>16)<227 && (d.rdata&1),"live VCOUNT/VBlank not on IO bus");finish();
+        start(0x04000200,false);check((d.rdata&0x00070007)==0x00070007,"LCD events missing in IF/IE");finish();
+        start(0x04000004,true,0,1);finish(); // Disable future LCD IRQ events.
+        start(0x04000200,true,0x00070000,12);finish();
+        start(0x04000200,false);check((d.rdata>>16)==0 && !d.irq,"LCD IF acknowledge failed");finish();
+        std::cout<<"PASS memory bus: byte masks, mirrors, delayed accept/read completion, no duplicate requests, ROM/unsupported faults, reset cancellation; LCD status/IE/IF/IME across 410000 stalled SDRAM clocks\n";
     }catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<"\n";return 1;}
 }

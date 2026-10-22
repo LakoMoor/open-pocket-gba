@@ -9,7 +9,7 @@ int main(int argc,char**argv){
     try{
         Vgba_timers_irq d;
         auto step=[&](unsigned n){for(unsigned i=0;i<n;i++){d.clk=0;d.eval();d.clk=1;d.eval();}};
-        auto reset=[&](){d.ce=0;d.access=0;d.we=0;d.keys=0;d.reset=1;step(2);d.reset=0;};
+        auto reset=[&](){d.ce=0;d.access=0;d.we=0;d.keys=0;d.video_events=0;d.reset=1;step(2);d.reset=0;};
         auto write=[&](unsigned a,unsigned v,unsigned mask=15){
             d.ce=0;d.addr=a;d.wdata=v;d.be=mask;d.access=1;d.we=1;step(1);d.access=0;d.we=0;d.eval();
         };
@@ -40,7 +40,14 @@ int main(int argc,char**argv){
         reset();write(0x130,0xc0030000,12);d.keys=1;step(1);
         check((read(0x200)>>16)==0,"AND keypad fired early");
         d.keys=3;step(1);check((read(0x200)>>16)==0x1000,"AND keypad missing");
+        reset();d.video_events=7;step(1);d.video_events=0;
+        check((read(0x200)>>16)==7 && !d.irq,"video IF must latch with IE/IME disabled");
+        write(0x200,7,3);check(!d.irq,"IME did not mask video IRQ");
+        write(0x208,1,1);check(d.irq,"latched video IRQ not delivered after IME enable");
+        d.video_events=2;write(0x200,0x00070000,12);d.video_events=0;
+        check((read(0x200)>>16)==2,"simultaneous video event must win over IF clear");
+        write(0x200,0x00020000,12);check(!d.irq,"video IF W1C did not release IRQ");
         reset();d.addr=0x204;d.eval();check(!d.selected,"unimplemented WAITCNT falsely selected");
-        std::cout<<"PASS timers: /1 /64 /256 /1024, four-way cascade, reload/restart/byte enables, IE/IF/IME, keypad OR/AND/retrigger\n";
+        std::cout<<"PASS timers: /1 /64 /256 /1024, four-way cascade, reload/restart/byte enables, IE/IF/IME, keypad OR/AND/retrigger, video flags/masking/event-over-W1C\n";
     }catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<"\n";return 1;}
 }

@@ -9,41 +9,49 @@ V=verilator
 command -v verilator_bin >/dev/null && V=verilator_bin
 MAKE=make
 command -v mingw32-make >/dev/null && MAKE=mingw32-make
+# Windows can give an edited driver and its old object identical timestamps.
+# Force compilation so a PASS always comes from the current C++ test source.
 mkdir -p build/gba/cpu
 $V --cc --exe -O2 -Wno-fatal --top-module gba_bringup \
-  --Mdir build/gba/cpu rtl/gba/cpu/*.v rtl/gba/memory/*.sv rtl/gba/peripherals/*.sv rtl/gba/gba_bringup.sv \
+  --Mdir build/gba/cpu rtl/gba/cpu/*.v rtl/gba/memory/*.sv rtl/gba/peripherals/*.sv rtl/gba/video/gba_video_timing.sv rtl/gba/gba_bringup.sv \
   "$(pwd)/sim/gba/cpu_tb.cpp" >build/gba/verilator.log 2>&1
-$MAKE -s -j4 -C build/gba/cpu -f Vgba_bringup.mk >build/gba/compile.log 2>&1
+$MAKE -B -s -j4 -C build/gba/cpu -f Vgba_bringup.mk >build/gba/compile.log 2>&1
 build/gba/cpu/Vgba_bringup | tee build/gba/cpu-results.txt
 mkdir -p build/gba/components
 $V --cc --exe -O2 -Wno-fatal --top-module gba_components \
   --Mdir build/gba/components rtl/gba/memory/gba_address_decode.sv \
   rtl/gba/memory/gba_sdram_arbiter.sv rtl/gba/video/gba_mode3_scanout.sv \
   sim/gba/components.sv "$(pwd)/sim/gba/components_tb.cpp" >build/gba/components-verilator.log 2>&1
-$MAKE -s -j4 -C build/gba/components -f Vgba_components.mk >build/gba/components-compile.log 2>&1
+$MAKE -B -s -j4 -C build/gba/components -f Vgba_components.mk >build/gba/components-compile.log 2>&1
 build/gba/components/Vgba_components | tee build/gba/components-results.txt
 mkdir -p build/gba/peripherals
 $V --cc --exe -O2 -Wno-fatal --top-module gba_timers_irq \
   --Mdir build/gba/peripherals rtl/gba/peripherals/gba_timers_irq.sv \
   "$(pwd)/sim/gba/peripherals_tb.cpp" >build/gba/peripherals-verilator.log 2>&1
-$MAKE -s -j4 -C build/gba/peripherals -f Vgba_timers_irq.mk >build/gba/peripherals-compile.log 2>&1
+$MAKE -B -s -j4 -C build/gba/peripherals -f Vgba_timers_irq.mk >build/gba/peripherals-compile.log 2>&1
 build/gba/peripherals/Vgba_timers_irq | tee build/gba/peripherals-results.txt
 mkdir -p build/gba/memory
 $V --cc --exe -O2 -Wno-fatal --top-module gba_memory \
   --Mdir build/gba/memory rtl/gba/memory/gba_address_decode.sv rtl/gba/memory/gba_memory.sv \
-  rtl/gba/peripherals/gba_timers_irq.sv "$(pwd)/sim/gba/memory_tb.cpp" >build/gba/memory-verilator.log 2>&1
-$MAKE -s -j4 -C build/gba/memory -f Vgba_memory.mk >build/gba/memory-compile.log 2>&1
+  rtl/gba/peripherals/gba_timers_irq.sv rtl/gba/video/gba_video_timing.sv "$(pwd)/sim/gba/memory_tb.cpp" >build/gba/memory-verilator.log 2>&1
+$MAKE -B -s -j4 -C build/gba/memory -f Vgba_memory.mk >build/gba/memory-compile.log 2>&1
 build/gba/memory/Vgba_memory | tee build/gba/memory-results.txt
+mkdir -p build/gba/video-timing
+$V --cc --exe -O2 -Wno-fatal --top-module gba_video_timing \
+  --Mdir build/gba/video-timing rtl/gba/video/gba_video_timing.sv \
+  "$(pwd)/sim/gba/video_timing_tb.cpp" >build/gba/video-timing-verilator.log 2>&1
+$MAKE -B -s -j4 -C build/gba/video-timing -f Vgba_video_timing.mk >build/gba/video-timing-compile.log 2>&1
+build/gba/video-timing/Vgba_video_timing | tee build/gba/video-timing-results.txt
 mkdir -p build/gba/uart
 $V --cc --exe -O2 -Wno-fatal --top-module gba_uart_test \
   --Mdir build/gba/uart rtl/gba/peripherals/gba_debug_uart.sv sim/gba/uart.sv \
   "$(pwd)/sim/gba/uart_tb.cpp" >build/gba/uart-verilator.log 2>&1
-$MAKE -s -j4 -C build/gba/uart -f Vgba_uart_test.mk >build/gba/uart-compile.log 2>&1
+$MAKE -B -s -j4 -C build/gba/uart -f Vgba_uart_test.mk >build/gba/uart-compile.log 2>&1
 build/gba/uart/Vgba_uart_test | tee build/gba/uart-results.txt
 mkdir -p build/gba/audio-clock
 $V --cc --exe -O2 -Wno-fatal --top-module gba_audio_clock_test \
   --Mdir build/gba/audio-clock rtl/gba/video/gba_hdmi_audio_clock.sv \
   rtl/hdmi/audio_clock_regeneration_packet.sv sim/gba/audio_clock.sv \
   "$(pwd)/sim/gba/audio_clock_tb.cpp" >build/gba/audio-clock-verilator.log 2>&1
-$MAKE -s -j4 -C build/gba/audio-clock -f Vgba_audio_clock_test.mk >build/gba/audio-clock-compile.log 2>&1
+$MAKE -B -s -j4 -C build/gba/audio-clock -f Vgba_audio_clock_test.mk >build/gba/audio-clock-compile.log 2>&1
 build/gba/audio-clock/Vgba_audio_clock_test | tee build/gba/audio-clock-results.txt

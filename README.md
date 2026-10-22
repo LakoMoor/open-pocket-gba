@@ -6,7 +6,7 @@ The original project history, GBC target and infrastructure are preserved.
 
 **This is not a complete GBA implementation.** The current target executes an
 original ARM/Thumb diagnostic in hardware RTL, uses SDRAM for GBA RAM/VRAM,
-implements timers and keypad IRQ, and drives 240x160 RGB555 at 3x through the
+implements timers, keypad and LCD status/IRQ, and drives 240x160 RGB555 at 3x through the
 existing 720x480 HDMI pipeline. CPU IRQ/SWI return, memory handshakes and complete
 output frames have been checked in Verilator. Native CPU performance, a compatible
 BIOS, full PPU, DMA, audio, cartridge saves and the GBA menu are still missing.

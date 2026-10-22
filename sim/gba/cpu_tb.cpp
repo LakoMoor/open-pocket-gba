@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
                 mem[0x600000/4]=0; mem[0x640000/4]=0; mem[0x64000c/4]=0;
                 bool busy=false, pending_read=false, seen_thumb=false;
                 uint32_t a=0, data=0, delay=0, rng=seed;
-                unsigned writes=0;
+                unsigned writes=0,irq_entries=0;
                 for(unsigned cycle=0;cycle<8000000;cycle++) {
                     d.clk=0; d.reset=cycle<8; d.mem_ack=0; d.mem_rvalid=0;
                     d.eval();
@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
                                     for(unsigned b=0;b<4;b++) if(d.mem_be & (1<<b))
                                         v=(v & ~(255u<<(b*8))) | (d.mem_wdata & (255u<<(b*8)));
                                     if (a>=0x680000/4 && a<0x692c00/4) ++writes;
+                                    if (a==0x64000c/4 && d.mem_wdata==1) ++irq_entries;
                                     busy=false;
                                 } else {pending_read=true; data=mem[a]; delay=2+(rng%7);}
                             }
@@ -52,12 +53,15 @@ int main(int argc, char **argv) {
                     if(mem[0x600000/4]==0x12345678) {
                         if (!seen_thumb || d.dispcnt!=0x0403 || mem[0x640000/4]!=12 || writes!=38400 || mem[0x640008/4]!=0x22000011 || mem[0x64000c/4]!=1)
                             throw std::runtime_error("CPU mode, SWI, condition, RAM or write count mismatch");
+                        unsigned video_status=mem[0x640010/4];
+                        if(irq_entries!=2 || !(video_status&1) || (video_status>>16)<160 || (video_status>>16)>=227)
+                            throw std::runtime_error("VBlank IRQ exception/return or live video status mismatch");
                         for(unsigned p=0;p<38400;p++) {
                             unsigned v=(mem[0x680000/4+p/2] >> ((p%2)*16)) & 0xffff;
                             if(v!=((31+p)&65535)) throw std::runtime_error("VRAM mismatch");
                         }
                         std::cout << "PASS seed="<<seed<<" reboot="<<run<<" clocks="<<cycle
-                                  <<" ARM/Thumb/SWI/timer IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores\n";
+                                  <<" ARM/Thumb/SWI/timer+VBlank IRQ/SPSR/conditions/odd LDRH/IWRAM/EWRAM/38400 VRAM stores\n";
                         break;
                     }
                     if(cycle==7999999) throw std::runtime_error("CPU timeout");

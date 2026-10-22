@@ -32,7 +32,7 @@ def main():
     if versions.exists():
         result += [versions.read_text().strip(), ""]
     tests_ok = True
-    for name in ("cpu", "components", "peripherals", "memory", "uart", "audio-clock", "board"):
+    for name in ("cpu", "components", "peripherals", "memory", "video-timing", "uart", "audio-clock", "board"):
         path = ROOT/f"build/gba/{name}-results.txt"
         text = path.read_text().strip() if path.exists() else "NOT RUN"
         tests_ok &= text.startswith("PASS ") and "FAIL" not in text
@@ -54,7 +54,7 @@ def main():
     if packed:
         result += [f"Bitstream: {fs.stat().st_size} bytes", f"SHA256: {hashlib.sha256(fs.read_bytes()).hexdigest()}"]
     result += ["", "Physical status: the earlier logic-ROM diagnostic loaded into SRAM but HDMI capture was black.",
-               "The current UART/audio-clock-fix revision has NOT been loaded. Explicit user approval is required.",
+               "The current LCD-timing/UART/audio-clock revision has NOT been loaded. Explicit user approval is required.",
                "No persistent flash writes. No commercial-game, external-suite or mGBA comparison results.",
                "GBC: existing firmware build passed; elaboration/lint with real shared ACR passed."]
     out = ROOT/args.out

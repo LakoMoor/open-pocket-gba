@@ -21,7 +21,7 @@ int main(int argc,char **argv) {
         uint64_t release_button_at=0;
         std::ofstream ppm("build/gba/diagnostic.ppm",std::ios::binary);
         ppm<<"P6\n720 480\n255\n";
-        while(context->time()<300000000000ULL) { // 300 ms, picosecond timescale
+        while(context->time()<400000000000ULL) { // 400 ms incl. waiting for native VBlank IRQ on both boots
             if(!d->eventsPending()) throw std::runtime_error("simulation stopped");
             // The scanout's next-pixel value is sampled by HDMI at this edge.
             auto rgb=d->rgb;auto x=d->cx;auto y=d->cy;

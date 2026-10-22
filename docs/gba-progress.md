@@ -13,7 +13,7 @@ This is a tested, limited bring-up configuration. The full requested console is
 | 1 audit/budget | Reviewed requested GBC modules, firmware, board, HDMI, build and flash flow; downloaded all three references; CPU selected; independent target and memory budget added. |
 | 2 CPU/memory | Executable ARM/Thumb RTL, memory bridge, address decode, EWRAM/IWRAM/VRAM backing, original diagnostic vectors and ROM. Six randomized-delay/reboot CPU runs pass. Compatible BIOS, cache, full instruction-suite and waitstates remain. |
 | 3 video | Existing HDMI encoder reused, 240x160 Mode 3 scanout, RGB555 and exact 3x scaling. Component and full-board pin-model tests pass. Full PPU and externally loaded homebrew remain. |
-| 4 timing/peripherals | Four timers, cascade, IRQ controller, keypad and actual CPU timer IRQ/return implemented/tested. DMA, video IRQ sources and accurate bus timing remain. |
+| 4 timing/peripherals | Four timers, cascade, IRQ controller, keypad, native LCD status counters and actual CPU timer/VBlank IRQ/return implemented/tested. DMA and accurate bus timing remain. |
 | 5 APU/cart | Not implemented. |
 | 6 menu/SD/saves | Existing GBC infrastructure preserved, GBA integration not implemented. |
 | 7 implementation | Synthesis/P&R results recorded separately below. Hardware demonstration not performed. |
@@ -22,21 +22,26 @@ This is a tested, limited bring-up configuration. The full requested console is
 
 `bash sim/gba/run.sh`:
 
-* Six CPU runs (three latency seeds, two boots each), roughly 4.11 million system
-  clocks per run. Checks ARM/Thumb, conditions, SWI, timer IRQ and SPSR return,
+* Six CPU runs (three latency seeds, two boots each), roughly 4.51 million system
+  clocks per run. Checks ARM/Thumb, conditions, SWI, timer/VBlank IRQ and SPSR return,
   odd-address LDRH, IWRAM and EWRAM values, exactly 38400 halfword stores and all
   VRAM pixels. Corrected an imported CPU LDRH bit-slice bug exposed by this check.
-  As a negative control, the same bench was built/run against the unchanged
-  upstream CPU; it fails the result check. The imported CPU with the one-line
-  LDRH fix passes all six runs.
+  An earlier version of the diagnostic was also run against the unchanged upstream
+  CPU as a negative control and failed its result check. That negative control has
+  not been repeated for the newly added VBlank portion.
 * 18 decode boundary/mirror/ROM overflow cases.
 * Two component boots; 691200 output pixels per boot checked against an independent
   RGB555 oracle, continuous competing CPU reads, 33.75/27 MHz clock ratio,
   two-line CDC handoff, no scanout underrun or CPU starvation.
 * Four timer prescalers, four-way cascade, counter reload and restart, byte
-  enables, IE/IF/IME, W1C interrupt flags and keypad OR/AND/retrigger tests.
+  enables, IE/IF/IME, W1C interrupt flags and keypad OR/AND/retrigger tests;
+  video flags latch with IRQs masked and win over simultaneous W1C.
 * Memory bus delayed acceptance/completion, byte masks, mirror translation,
   ROM write rejection, unsupported I/O/ROM-overflow faults and reset cancellation.
+  LCD status and IF continue across 410000 clocks of an unaccepted SDRAM read.
+* Native video timing: three frames/842688 GBA ticks, every DISPSTAT/VCOUNT
+  boundary checked, including line 227, 684 HBlank events, three VBlank and three
+  VCount events; byte writes, comparison writes, enable gating and reset.
 * Read-only diagnostic UART: independent 8N1 waveform decode, hex encoding,
   atomic snapshots while inputs change, periodic repeat and reset-to-idle.
 * Real HDMI Audio Clock Regeneration (no stub): exact average 48 kHz clock,
@@ -112,6 +117,19 @@ Both simulated board boots still pass. Strict routing of that change is recorded
 in the final measurements; no timing checks were waived.
 
 ## Remaining concrete architecture gates
+
+Continuation on 2026-10-22 adds native LCD status timing: DISPSTAT/VCOUNT,
+VBlank/HBlank/VCount IRQ sources and blank-start strobes. The independent timing
+bench examines every tick in three frames (842688 GBA ticks), with irregular
+system-clock gaps and byte/register/reset checks. The memory integration bench
+holds an SDRAM request unaccepted for 410000 system clocks while video IF events
+continue to accumulate. The original ARM program now requires both timer and
+VBlank exception/return paths before entering Thumb and filling VRAM. These are
+status/timing additions, not a complete PPU; HDMI scanout remains independent.
+Tests force C++ object rebuilds to avoid stale test drivers when Windows file
+timestamps coincide. New measurements supersede the `abc780e` figures above;
+consult `gba-measurements.txt` for the current artifact and source revision.
+This version has not been programmed onto the board.
 
 1. Fast IWRAM plus bounded ROM instruction/data cache; current uncached execution
    is too slow to claim native CPU performance.
