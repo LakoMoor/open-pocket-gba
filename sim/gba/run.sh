@@ -12,11 +12,11 @@ command -v mingw32-make >/dev/null && MAKE=mingw32-make
 # Windows can give an edited driver and its old object identical timestamps.
 # Force compilation so a PASS always comes from the current C++ test source.
 mkdir -p build/gba/cpu
-$V --cc --exe -O2 -Wno-fatal --top-module gba_bringup \
+$V --cc --exe -O2 -Wno-fatal --top-module gba_cpu_sim \
   --Mdir build/gba/cpu rtl/gba/cpu/*.v rtl/gba/memory/*.sv rtl/gba/peripherals/*.sv rtl/gba/video/gba_video_timing.sv rtl/gba/gba_bringup.sv \
-  "$(pwd)/sim/gba/cpu_tb.cpp" >build/gba/verilator.log 2>&1
-$MAKE -B -s -j4 -C build/gba/cpu -f Vgba_bringup.mk >build/gba/compile.log 2>&1
-build/gba/cpu/Vgba_bringup | tee build/gba/cpu-results.txt
+  sim/gba/cpu.sv "$(pwd)/sim/gba/cpu_tb.cpp" >build/gba/verilator.log 2>&1
+$MAKE -B -s -j4 -C build/gba/cpu -f Vgba_cpu_sim.mk >build/gba/compile.log 2>&1
+build/gba/cpu/Vgba_cpu_sim | tee build/gba/cpu-results.txt
 mkdir -p build/gba/components
 $V --cc --exe -O2 -Wno-fatal --top-module gba_components \
   --Mdir build/gba/components rtl/gba/memory/gba_address_decode.sv \
@@ -33,9 +33,22 @@ build/gba/peripherals/Vgba_timers_irq | tee build/gba/peripherals-results.txt
 mkdir -p build/gba/memory
 $V --cc --exe -O2 -Wno-fatal --top-module gba_memory \
   --Mdir build/gba/memory rtl/gba/memory/gba_address_decode.sv rtl/gba/memory/gba_memory.sv \
-  rtl/gba/peripherals/gba_timers_irq.sv rtl/gba/video/gba_video_timing.sv "$(pwd)/sim/gba/memory_tb.cpp" >build/gba/memory-verilator.log 2>&1
+  rtl/gba/peripherals/gba_timers_irq.sv rtl/gba/peripherals/gba_dma.sv rtl/gba/video/gba_video_timing.sv "$(pwd)/sim/gba/memory_tb.cpp" >build/gba/memory-verilator.log 2>&1
 $MAKE -B -s -j4 -C build/gba/memory -f Vgba_memory.mk >build/gba/memory-compile.log 2>&1
 build/gba/memory/Vgba_memory | tee build/gba/memory-results.txt
+mkdir -p build/gba/dma
+$V --cc --exe -O2 -Wno-fatal --top-module gba_dma \
+  --Mdir build/gba/dma rtl/gba/peripherals/gba_dma.sv \
+  "$(pwd)/sim/gba/dma_tb.cpp" >build/gba/dma-verilator.log 2>&1
+$MAKE -B -s -j4 -C build/gba/dma -f Vgba_dma.mk >build/gba/dma-compile.log 2>&1
+build/gba/dma/Vgba_dma | tee build/gba/dma-results.txt
+mkdir -p build/gba/dma-memory
+$V --cc --exe -O2 -Wno-fatal --top-module gba_memory \
+  --Mdir build/gba/dma-memory rtl/gba/memory/gba_address_decode.sv rtl/gba/memory/gba_memory.sv \
+  rtl/gba/peripherals/gba_timers_irq.sv rtl/gba/peripherals/gba_dma.sv rtl/gba/video/gba_video_timing.sv \
+  "$(pwd)/sim/gba/dma_memory_tb.cpp" >build/gba/dma-memory-verilator.log 2>&1
+$MAKE -B -s -j4 -C build/gba/dma-memory -f Vgba_memory.mk >build/gba/dma-memory-compile.log 2>&1
+build/gba/dma-memory/Vgba_memory | tee build/gba/dma-memory-results.txt
 mkdir -p build/gba/video-timing
 $V --cc --exe -O2 -Wno-fatal --top-module gba_video_timing \
   --Mdir build/gba/video-timing rtl/gba/video/gba_video_timing.sv \

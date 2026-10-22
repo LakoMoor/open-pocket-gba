@@ -13,7 +13,7 @@ This is a tested, limited bring-up configuration. The full requested console is
 | 1 audit/budget | Reviewed requested GBC modules, firmware, board, HDMI, build and flash flow; downloaded all three references; CPU selected; independent target and memory budget added. |
 | 2 CPU/memory | Executable ARM/Thumb RTL, memory bridge, address decode, EWRAM/IWRAM/VRAM backing, original diagnostic vectors and ROM. Six randomized-delay/reboot CPU runs pass. Compatible BIOS, cache, full instruction-suite and waitstates remain. |
 | 3 video | Existing HDMI encoder reused, 240x160 Mode 3 scanout, RGB555 and exact 3x scaling. Component and full-board pin-model tests pass. Full PPU and externally loaded homebrew remain. |
-| 4 timing/peripherals | Four timers, cascade, IRQ controller, keypad, native LCD status counters and actual CPU timer/VBlank IRQ/return implemented/tested. DMA and accurate bus timing remain. |
+| 4 timing/peripherals | Four timers, cascade, IRQ controller, keypad, LCD status and ordinary DMA0..3 implemented/tested. CPU timer/VBlank IRQ in ARM and DMA IRQ/return in Thumb pass. FIFO/capture DMA and accurate bus timing remain. |
 | 5 APU/cart | Not implemented. |
 | 6 menu/SD/saves | Existing GBC infrastructure preserved, GBA integration not implemented. |
 | 7 implementation | Synthesis/P&R results recorded separately below. Hardware demonstration not performed. |
@@ -23,12 +23,15 @@ This is a tested, limited bring-up configuration. The full requested console is
 `bash sim/gba/run.sh`:
 
 * Six CPU runs (three latency seeds, two boots each), roughly 4.51 million system
-  clocks per run. Checks ARM/Thumb, conditions, SWI, timer/VBlank IRQ and SPSR return,
+  clocks per run. Checks ARM/Thumb, conditions, SWI, timer/VBlank/DMA IRQ and SPSR return,
   odd-address LDRH, IWRAM and EWRAM values, exactly 38400 halfword stores and all
   VRAM pixels. Corrected an imported CPU LDRH bit-slice bug exposed by this check.
   An earlier version of the diagnostic was also run against the unchanged upstream
   CPU as a negative control and failed its result check. That negative control has
-  not been repeated for the newly added VBlank portion.
+  not been repeated for the newly added VBlank/DMA portions. The DMA3 copy and
+  Thumb IRQ return are checked before completion, including exactly four DMA
+  destination writes, copied values and the DMA3 IF flag. A simulation-only
+  wrapper confirms CPU enable is low and fetch PC remains stable during DMA.
 * 18 decode boundary/mirror/ROM overflow cases.
 * Two component boots; 691200 output pixels per boot checked against an independent
   RGB555 oracle, continuous competing CPU reads, 33.75/27 MHz clock ratio,
@@ -42,6 +45,12 @@ This is a tested, limited bring-up configuration. The full requested console is
 * Native video timing: three frames/842688 GBA ticks, every DISPSTAT/VCOUNT
   boundary checked, including line 227, 684 HBlank events, three VBlank and three
   VCount events; byte writes, comparison writes, enable gating and reset.
+* DMA unit bench: 24 width/address-mode combinations, random bus stalls, halfword
+  lanes, repeat/reload, four-channel priority/preemption, two-tick startup,
+  16384/65536 unit counts, byte writes, masks, completion IRQ, unsupported modes,
+  abort and reset. The integration bench checks CPU response ownership/blocking,
+  a 32-word copy, IE/IF/IME, 160 visible HBlank transfers and suppression during
+  VBlank, VBlank-triggered DMA, IO writes and observable access/configuration faults.
 * Read-only diagnostic UART: independent 8N1 waveform decode, hex encoding,
   atomic snapshots while inputs change, periodic repeat and reset-to-idle.
 * Real HDMI Audio Clock Regeneration (no stub): exact average 48 kHz clock,
@@ -138,6 +147,22 @@ required). The router reports one GPIO dedicated-route fallback warning and zero
 errors. The fresh 7263596-byte bitstream and its SHA256/source fingerprint are
 recorded in `gba-measurements.txt`. No timing failures were waived.
 
+## Ordinary DMA continuation
+
+DMA0..3 now perform ordinary immediate/VBlank/visible-HBlank transfers with
+16/32-bit units, address modes, repeat/reload, priority, CPU hold and IF bits 8..11.
+The updated ROM completes a four-word DMA3 transfer and returns from its IRQ in
+Thumb. Across the randomized-latency CPU runs, PC/enable are held for 106–122
+system clocks during the transfer. The unit bench includes changed CNT_L/DAD
+between repeated blocks, preservation of the running source despite SAD writes,
+and enable-time latches for the first block. The memory integration test covers
+exactly 160 HBlank transfers, VBlank suppression, response ownership and faults.
+
+FIFO, video capture, cartridge DRQ, native bus timing and open-bus behavior remain
+unsupported. Access/configuration faults are explicit rather than silently
+performing an incorrect transfer. Current fit/timing measurements are recorded
+in `gba-measurements.txt`. This DMA version has not been loaded onto the board.
+
 ## Remaining concrete architecture gates
 
 1. Fast IWRAM plus bounded ROM instruction/data cache; current uncached execution
@@ -146,7 +171,8 @@ recorded in `gba-measurements.txt`. No timing failures were waived.
    instruction/exception suites against hardware/mGBA references.
 3. Implement a bandwidth-budgeted PPU, beginning with GBA-timed modes 3/4/5, then
    tile/affine/OBJ/merge, windows, mosaic and blend behavior; retain measured fit.
-4. Add DMA and WAITCNT/prefetch with timing tests before claiming audio/graphics DMA.
+4. Add DMA FIFO/video-capture/DRQ, native bus timing and WAITCNT/prefetch before
+   claiming accurate audio/graphics DMA.
 5. APU and sound FIFOs; real HDMI audio with CDC tests.
 6. Separate GBA firmware/storage configuration, SD header validation/loading,
    save protocols and persistence, cached external cartridge storage.

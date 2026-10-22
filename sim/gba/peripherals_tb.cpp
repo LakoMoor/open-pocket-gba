@@ -9,7 +9,7 @@ int main(int argc,char**argv){
     try{
         Vgba_timers_irq d;
         auto step=[&](unsigned n){for(unsigned i=0;i<n;i++){d.clk=0;d.eval();d.clk=1;d.eval();}};
-        auto reset=[&](){d.ce=0;d.access=0;d.we=0;d.keys=0;d.video_events=0;d.reset=1;step(2);d.reset=0;};
+        auto reset=[&](){d.ce=0;d.access=0;d.we=0;d.keys=0;d.video_events=0;d.dma_events=0;d.reset=1;step(2);d.reset=0;};
         auto write=[&](unsigned a,unsigned v,unsigned mask=15){
             d.ce=0;d.addr=a;d.wdata=v;d.be=mask;d.access=1;d.we=1;step(1);d.access=0;d.we=0;d.eval();
         };

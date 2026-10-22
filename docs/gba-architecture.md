@@ -87,12 +87,55 @@ Status and VCOUNT are read-only; byte writes update only IRQ enables and the
 IE/IME, with write-one-to-clear acknowledgment in the shared IRQ controller.
 Reprogramming the comparison can produce a new match edge; enabling an already
 active status condition does not create an artificial edge. Blank-start strobes
-are available for future DMA integration but currently have no DMA consumer.
+drive DMA, with HBlank DMA gated to VCOUNT < 160.
 These conventions follow [GBATEK LCD I/O](https://mgba-emu.github.io/gbatek/#lcd-io-interrupts-and-status).
 The status clock is not yet coupled to a native pixel renderer: the current HDMI
 line buffer still reads the static CPU-written framebuffer on the HDMI schedule.
 Key inputs reuse the GBC GPIO mapping (L/R currently unavailable). Prescaler phase
 on enable and simultaneous event/write edge cases still need hardware-suite tests.
+
+## DMA and bus ownership
+
+`gba_dma` implements ordinary DMA0..3 at 0x040000B0..DF. Enabling a channel
+latches source, destination and count, aligns the transfer width, and arms it
+after two GBA enables. Immediate transfers hold the CPU during startup; timed
+channels wait without holding the CPU until a VBlank or visible-HBlank event.
+Each transaction is one read/write pair, with channel priority 0 > 1 > 2 > 3
+reconsidered between pairs. A pending higher-priority channel cannot steal a
+read's writeback. Count zero expands to 16384 units (DMA0..2) or 65536 (DMA3).
+Increment, decrement, fixed source/destination and destination increment/reload
+are supported. Repeat retains source progress and reloads count and optionally
+destination from the programmed registers at the next trigger. Writes while a
+channel waits between blocks therefore affect the next repeat, while the first
+block uses the values latched at enable. Updating SAD does not restart the current
+source pointer. Immediate mode finishes even when the repeat bit was set.
+
+The memory controller accepts at most one CPU/DMA transaction at a time and
+latches the response owner. DMA has priority at the next idle boundary, while
+an in-flight CPU read is allowed to finish. `gba_cpu_bridge` holds STEP and gates
+CPU enable during DMA; it continues to consume its own outstanding response.
+DMA responses never assert CPU done. Both clients use the existing address
+translation and byte masks and share the existing fair SDRAM/video arbiter.
+Completion events feed IF bits 8..11 independently of IE/IME. Memory errors abort
+the offending DMA block without a completion IRQ; the first-fault address remains
+visible in UART telemetry. Reset cancels pending DMA and holds the memory port idle.
+
+FIFO, video capture, DRQ and prohibited source modes raise a diagnostic fault,
+including attempts to select them on an already-enabled waiting channel.
+DMA access to BIOS or its own registers is rejected. SAD/DAD/CNT_L reads return
+zero here; hardware open-bus behavior remains unimplemented. Busy-channel
+reconfiguration and native bus waitstates are not compatibility claims. The
+register semantics follow [GBATEK DMA](https://mgba-emu.github.io/gbatek/#dma-transfers),
+with the above explicit omissions. Only CPU/Thumb decode is imported; this DMA
+controller is original GPL-3.0-or-later RTL.
+
+The diagnostic performs a four-word IWRAM-to-EWRAM DMA3 copy and returns from its
+IRQ in Thumb before writing the completion signature. The CPU test exposes internal
+enable/hold signals through a simulation-only wrapper and checks PC stability for
+every DMA-held clock. Separate tests use random memory delays and exercise maximum
+counts, channel priority/preemption, all 24 width/address-mode combinations,
+halfword lanes, repeat/reload, byte writes, faults, reset and exactly 160 HBlank
+transfers before suppression throughout VBlank.
 
 ## Bring-up observability
 

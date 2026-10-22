@@ -73,6 +73,29 @@ emit(0x3002)  # adds r0,#2
 emit(0x3101)  # adds r1,#1 (RGB555 ramp)
 emit(0x3a01)  # subs r2,#1
 emit(0xd100 | (((labels['fill']-(pc+4))//2) & 255))
+# DMA3 copies four words while the CPU is held, then interrupts Thumb code.
+literal(2, 0x0300000c)
+emit(0x2300)  # movs r3,#0
+emit(0x6013)  # str r3,[r2] -- reset exception marker
+literal(0, 0x04000200)
+literal(1, 0x08000800)
+emit(0x6001)  # IE=DMA3, IF acknowledge previous DMA3
+emit(0x2101)  # movs r1,#1
+emit(0x6081)  # str r1,[r0,#8] -- IME
+literal(4, 0x040000d4)
+literal(5, 0x03000004)
+emit(0x6025)  # DMA3SAD
+literal(6, 0x02000020)
+emit(0x6066)  # DMA3DAD
+literal(7, 0xc4000004)
+emit(0x60a7)  # DMA3CNT: four words, immediate, IRQ
+labels['dma_irq'] = pc
+emit(0x6813)  # ldr r3,[r2]
+emit(0x2b01)  # cmp r3,#1
+emit(0xd100 | (((labels['dma_irq']-(pc+4))//2) & 255))
+emit(0x6801)  # ldr r1,[r0] -- save IE/IF after Thumb exception return
+literal(2, 0x03000018)
+emit(0x6011)  # str r1,[r2]
 literal(0, 0x02000000)
 literal(1, 0x12345678)
 emit(0x6001)  # str r1,[r0] -- completion signature

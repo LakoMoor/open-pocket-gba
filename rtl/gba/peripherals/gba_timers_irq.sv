@@ -5,6 +5,7 @@ module gba_timers_irq (
     input logic clk,reset,ce,
     input logic [9:0] keys, // 1 = pressed, A B Select Start Right Left Up Down R L
     input logic [2:0] video_events,
+    input logic [3:0] dma_events,
     input logic access,we,
     input logic [9:0] addr,
     input logic [31:0] wdata,
@@ -42,6 +43,7 @@ module gba_timers_irq (
         key_match=keycnt[15] ? ((keys & keycnt[9:0])==keycnt[9:0] && |keycnt[9:0]) : |(keys & keycnt[9:0]);
         events=0;
         events[2:0]=video_events;
+        events[11:8]=dma_events;
         for (int t=0;t<4;t++) events[3+t]=overflow[t] && control[t][6];
         events[12]=key_match && !key_previous && keycnt[14];
         clear_flags=0;

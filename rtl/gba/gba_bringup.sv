@@ -26,6 +26,7 @@ module gba_bringup (
     wire req,we,done;
     wire [31:0] addr,wdata,rdata;
     wire [3:0] be;
-    gba_cpu_bridge bridge(.*);
+    wire dma_active;
+    gba_cpu_bridge bridge(.hold_cpu(dma_active),.*);
     gba_memory memory(.*);
 endmodule

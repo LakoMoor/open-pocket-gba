@@ -9,6 +9,7 @@ rtl/gba/memory/gba_memory.sv
 rtl/gba/memory/gba_sdram_arbiter.sv
 rtl/gba/gba_bringup.sv
 rtl/gba/peripherals/gba_timers_irq.sv
+rtl/gba/peripherals/gba_dma.sv
 rtl/gba/peripherals/gba_debug_uart.sv
 rtl/gba/video/gba_mode3_scanout.sv
 rtl/gba/video/gba_video_timing.sv
