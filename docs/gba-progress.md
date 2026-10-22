@@ -165,6 +165,13 @@ unsupported. Access/configuration faults are explicit rather than silently
 performing an incorrect transfer. Current fit/timing measurements are recorded
 in `gba-measurements.txt`. This DMA version has not been loaded onto the board.
 
+DMA revision `de37727` passes all RTL tests, both board-model boots and strict
+seed-1 place-and-route/packing: **13104 LUT4, 3655 DFF, 1 BSRAM**. Post-route
+Fmax is **56.32 MHz system** (33.75 MHz required) and **112.01 MHz pixel**
+(27 MHz required), with zero errors and one GPIO dedicated-route fallback
+warning. No timing failures were waived. The 7263596-byte bitstream SHA256 is
+`87b42bb70d3fd60aec27a1617a8476fdf75c09b3d9e96e96fe7004d33beff831`.
+
 ## Remaining concrete architecture gates
 
 1. Fast IWRAM plus bounded ROM instruction/data cache; current uncached execution
