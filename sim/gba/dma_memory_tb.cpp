@@ -12,6 +12,7 @@ int main(int argc,char**argv){
         std::vector<uint32_t> mem(0x200000);
         bool busy=false,reading=false;unsigned delay=0,a=0,data=0,mask=0,value=0,rng=41;
         unsigned writes=0,clocks=0;bool is_write=false;
+        bool delay_cpu_read=false,saw_dma_waiting=false;
         auto check=[&](bool ok,const char*s){if(!ok)throw std::runtime_error(s);};
         auto step=[&](){
             d.clk=0;d.mem_ack=0;d.mem_rvalid=0;d.eval();
@@ -25,7 +26,11 @@ int main(int argc,char**argv){
                         if(is_write){
                             for(unsigned b=0;b<4;b++)if(mask&(1<<b))mem[a]=(mem[a]&~(255u<<(b*8)))|(value&(255u<<(b*8)));
                             ++writes;busy=false;
-                        }else{reading=true;data=mem[a];delay=3+rng%7;}
+                        }else{
+                            reading=true;data=mem[a];
+                            delay=delay_cpu_read && a==0 ? 500000 : 3+rng%7;
+                            if(a==0)delay_cpu_read=false;
+                        }
                     }
                 }else if(!busy && d.mem_req){
                     busy=true;reading=false;a=d.mem_addr;mask=d.mem_be;value=d.mem_wdata;is_write=d.mem_we;
@@ -33,9 +38,11 @@ int main(int argc,char**argv){
                 }
             }
             d.eval();d.clk=1;d.eval();clocks++;
+            saw_dma_waiting|=bool(d.dma_active && busy && reading && a==0);
         };
         auto reset=[&](){
-            d.req=0;d.keys=0;d.reset=1;busy=false;step();d.reset=0;writes=0;
+            d.req=0;d.keys=0;d.reset=1;busy=false;delay_cpu_read=false;saw_dma_waiting=false;
+            step();d.reset=0;writes=0;
         };
         auto access=[&](unsigned addr,bool we,unsigned value=0,unsigned mask=15){
             d.addr=addr;d.we=we;d.wdata=value;d.be=mask;d.req=1;
@@ -60,6 +67,15 @@ int main(int argc,char**argv){
         access(0x04000200,true,0x800,3);access(0x04000208,true,1,1);check(d.irq,"DMA IE/IME delivery");
         access(0x04000200,true,0x08000000,12);check(!d.irq,"DMA IF W1C failed");
         check(!(access(0x040000dc,false)&0x80000000),"DMA enable did not clear");
+
+        // VBlank arrives while a CPU read is already in flight. Its response
+        // must still reach the CPU before the waiting DMA can own the bus.
+        reset();setup(3,0x02000000,0x03000400,2,0xd400);delay_cpu_read=true;
+        check(access(0x08000000,false)==0xaabbccdd && saw_dma_waiting && writes==0,
+              "VBlank DMA stole/lost an in-flight CPU response");
+        check(access(0x08000000,false)==0xaabbccdd && writes==2 && !d.dma_active && !d.fault,
+              "waiting DMA did not run before the next CPU request");
+        check(mem[0x640404/4]==0x01020304,"queued DMA payload after CPU response");
 
         // Exactly 160 visible HBlank transfers; no DMA during VBlank/line 227.
         reset();for(unsigned p=0;p<160;p++){
@@ -93,6 +109,6 @@ int main(int argc,char**argv){
         check(d.fault && d.fault_addr==0x040000d4 && !d.dma_active,"DMA self-register access must fault");
         reset();setup(3,0x02000000,0x03000000,2,0xb400);idle(2);
         check(d.fault && d.fault_addr==0x040000dc && !d.dma_active && writes==0,"unsupported DMA mode not observable");
-        std::cout<<"PASS DMA memory integration: CPU response ownership/blocking, 32-word copy under random SDRAM latency, IE/IF/IME, 160 visible HBlanks and VBlank exclusion, VBlank start, IO halfword write, readonly/self-register/unsupported faults; "<<clocks<<" clocks\n";
+        std::cout<<"PASS DMA memory integration: CPU response ownership/blocking including VBlank during 500000-clock CPU read, 32-word copy under random SDRAM latency, IE/IF/IME, 160 visible HBlanks and VBlank exclusion, VBlank start, IO halfword write, readonly/self-register/unsupported faults; "<<clocks<<" clocks\n";
     }catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<"\n";return 1;}
 }

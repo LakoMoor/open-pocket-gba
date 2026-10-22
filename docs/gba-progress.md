@@ -157,6 +157,8 @@ system clocks during the transfer. The unit bench includes changed CNT_L/DAD
 between repeated blocks, preservation of the running source despite SAD writes,
 and enable-time latches for the first block. The memory integration test covers
 exactly 160 HBlank transfers, VBlank suppression, response ownership and faults.
+It also forces VBlank to arrive during a 500000-clock CPU read: that in-flight
+response reaches the CPU, then queued DMA runs before the next CPU request.
 
 FIFO, video capture, cartridge DRQ, native bus timing and open-bus behavior remain
 unsupported. Access/configuration faults are explicit rather than silently

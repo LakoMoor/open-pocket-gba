@@ -123,7 +123,8 @@ visible in UART telemetry. Reset cancels pending DMA and holds the memory port i
 FIFO, video capture, DRQ and prohibited source modes raise a diagnostic fault,
 including attempts to select them on an already-enabled waiting channel.
 DMA access to BIOS or its own registers is rejected. SAD/DAD/CNT_L reads return
-zero here; hardware open-bus behavior remains unimplemented. Busy-channel
+zero here; hardware open-bus behavior remains unimplemented. PPU contention and
+HBlank OAM/OBJ access restrictions are not modeled by this framebuffer diagnostic. Busy-channel
 reconfiguration and native bus waitstates are not compatibility claims. The
 register semantics follow [GBATEK DMA](https://mgba-emu.github.io/gbatek/#dma-transfers),
 with the above explicit omissions. Only CPU/Thumb decode is imported; this DMA
